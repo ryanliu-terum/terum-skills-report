@@ -42,7 +42,12 @@ export function sourceLookup(skills: readonly SkillEntry[]): (name: string) => {
     entry.textChars = Math.max(entry.textChars, skill.skillTextChars);
     byName.set(skill.name, entry);
   }
-  return (name) => { const e = byName.get(name); return e === undefined ? { source: 'unknown', textChars: 0 } : { source: e.sources.join('|'), textChars: e.textChars }; };
+  const found = (name: string) => { const e = byName.get(name); return e === undefined ? undefined : { source: e.sources.join('|'), textChars: e.textChars }; };
+  return (name) => {
+    // A plugin skill fires as `<plugin>:<skill>`; the copied folder is named `<skill>`.
+    const colon = name.lastIndexOf(':');
+    return found(name) ?? (colon > 0 ? found(name.slice(colon + 1)) : undefined) ?? { source: 'unknown', textChars: 0 };
+  };
 }
 
 interface Firing { kind: 'D1' | 'D2'; skill: string; index: number; ts: string; model: string; messageId: string | undefined }
@@ -218,7 +223,7 @@ export async function scanTranscripts(root: string, skills: readonly SkillEntry[
       const parsed = parseTranscript(text);
       summary.linesSkipped += parsed.badLines;
       if (parsed.records === 0) { problem(file, 'could not parse'); continue; }
-      if (parsed.counted === 0) { if (parsed.headless > 0) summary.headlessSessionsSkipped++; else problem(file, 'no messages'); continue; }
+      if (parsed.counted === 0) { if (parsed.headless > 0) summary.headlessSessionsSkipped++; else problem(file, 'no user or assistant messages'); continue; }
       const subagents = new Map<string, SubagentWork>();
       const nested = join(dir, sessionId, 'subagents');
       let nestedFiles: string[] = [];

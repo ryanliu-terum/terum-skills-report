@@ -16,12 +16,14 @@ describe('looksSecretName', () => {
 });
 
 describe('isLiteralValue', () => {
-  it('rejects variable reads and placeholders', () => {
-    for (const v of ['$ANTHROPIC_API_KEY', '${TOKEN}', '${{ secrets.NPM_TOKEN }}', 'os.environ["X"]', 'process.env.X', '<your-token>', 'your-api-key-here', 'changeme', '***', 'xxx', 'true', 'null', 'abc', '$(cat file)', '%TOKEN%', '{{ token }}', '[REDACTED:x]', 'os.getenv("K")'])
+  it('rejects variable reads, placeholders, paths, words, constant names and calls', () => {
+    for (const v of ['$ANTHROPIC_API_KEY', '${TOKEN}', '${{ secrets.NPM_TOKEN }}', 'os.environ["X"]', 'process.env.X', '<your-token>', 'your-api-key-here', 'changeme', '***', 'xxx', 'true', 'null', 'abc', '$(cat file)', '%TOKEN%', '{{ token }}', '[REDACTED:x]', 'os.getenv("K")',
+      // Measured false alarms from real skills (2026-09-24): code words, types, counts, constants.
+      'string', 'compact', 'Bearer', 'RAW_TOKEN_PATTERN', 'MAX_TOKENS_X', 'scale_type', 'dimKey', '4096', 'getToken()', 'readToken(file)', '/run/secrets/pw', './keys/dev.pem', 'C:\\keys\\x.p12', 'the auth flow for admins', 'Authentication tokens issued by the server'])
       expect(isLiteralValue(v), v).toBe(false);
   });
-  it('accepts literals', () => {
-    for (const v of ['hunter22', 'PlantedHunter2Pass', '"quoted"', 'v4lu3-here', 'abcdef0123456789'])
+  it('accepts secret-shaped literals: eight characters with a digit, or sixteen without', () => {
+    for (const v of ['hunter22', 'PlantedHunter2Pass', 'v4lu3-here', 'abcdef0123456789', 'correcthorsebatterystaple', 'correct horse battery staple 9', 'dGhpcyBpcyBhIHNlY3JldA==', 'p@ssw0rd!'])
       expect(isLiteralValue(v), v).toBe(true);
   });
 });
@@ -42,6 +44,12 @@ describe('redact', () => {
     expect(redactions.map((r) => [r.line, r.rule, r.name])).toEqual([[1, 'anthropic-key', 'A'], [2, 'openai-key', 'B'], [3, 'github-token', 'C'], [4, 'aws-access-key', 'D'], [5, 'slack-token', 'E'], [6, 'jwt', 'F']]);
     for (const r of redactions) expect(r.hint).toMatch(/^.{6}… \(\d+ chars\)$/);
     expect(text).not.toContain('PLANTED');
+  });
+
+  it('replaces email addresses, which are identity, and leaves scp-style git remotes and npm scopes alone', () => {
+    const { text, redactions } = redact('author: Some One <some.one+tag@example.co.uk>\nclone git@github.com:org/repo.git\nnpm i @anthropic-ai/sdk\nmail me at someone@example.com.');
+    expect(text).toBe('author: Some One <[REDACTED:email]>\nclone git@github.com:org/repo.git\nnpm i @anthropic-ai/sdk\nmail me at [REDACTED:email].');
+    expect(redactions.map((r) => [r.line, r.rule])).toEqual([[1, 'email'], [4, 'email']]);
   });
 
   it('replaces only the value of a literal assigned to a secret-looking name', () => {
@@ -81,6 +89,15 @@ describe('redact', () => {
       'description: The auth flow',
       'secret: true',
       'PASSWORD=',
+      'key: string;',
+      "const key = 'compact';",
+      'MAX_TOKENS = 4096',
+      'accessorKey: "dimKey",',
+      'const TOKENS = RAW_TOKEN_PATTERN;',
+      'tokens_out = total_tokens_out',
+      'password: /run/secrets/pw',
+      'const token = getToken(session);',
+      'X-API-Key: equal to the header name',
     ];
     for (const line of untouched) {
       const { text, redactions } = redact(line);

@@ -6,13 +6,32 @@
  */
 import { createHash } from 'node:crypto';
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 
 export interface WrittenFile {
   /** Path inside the output folder, forward slashes. */
   path: string;
   sha256: string;
   bytes: number;
+}
+
+/**
+ * Windows keeps an 8.3 short name for every long folder name (`Ryan Liu` is also `RYANLI~1`), and
+ * temp paths and some tools use it. There is no API to ask for it from Node, so the likely
+ * spellings are derived: the first six letters and digits, upper-cased, then `~1` to `~4`. Only
+ * segments that need a short name (over eight characters, or with a space or a dot) get one.
+ */
+export function shortNameSpellings(home: string): string[] {
+  if (!/^[A-Za-z]:[\\/]/.test(home)) return [];
+  const segments = home.split(/[\\/]/);
+  const out: string[] = [];
+  segments.forEach((segment, i) => {
+    if (i === 0 || (segment.length <= 8 && !/[ .]/.test(segment))) return;
+    const stem = segment.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
+    if (stem.length === 0) return;
+    for (let n = 1; n <= 4; n++) out.push([...segments.slice(0, i), `${stem}~${n}`, ...segments.slice(i + 1)].join('\\'));
+  });
+  return out;
 }
 
 /**
@@ -27,7 +46,7 @@ export class Scrubber {
   constructor(homes: readonly string[], hostname: string) {
     const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const spellings = new Set<string>();
-    for (const home of homes) {
+    for (const home of [...homes, ...homes.flatMap(shortNameSpellings)]) {
       const forward = home.replaceAll('\\', '/');
       const back = home.replaceAll('/', '\\');
       for (const s of [forward, back, back.replaceAll('\\', '\\\\'), `file:///${forward.replace(/^\//, '')}`]) spellings.add(s);
@@ -35,8 +54,9 @@ export class Scrubber {
     }
     // Longest first so `C:\\Users\\x` wins over `C:\Users\x` inside JSON.
     const ordered = [...spellings].filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
-    // Windows paths are case-insensitive and users type them every which way.
-    this.homePatterns = ordered.map((s) => new RegExp(escape(s), sep === '\\' ? 'gi' : 'g'));
+    // A Windows path is case-insensitive wherever this runs, and users type them every which way.
+    const windowsShaped = (s: string): boolean => /^(?:file:\/\/\/)?[A-Za-z]:/.test(s);
+    this.homePatterns = ordered.map((s) => new RegExp(escape(s), windowsShaped(s) ? 'gi' : 'g'));
     // Short hostnames are ordinary words; replacing them would corrupt prose. Five characters and a
     // word boundary keeps `dev` and `mac` alone while catching `ryans-macbook-pro`.
     this.hostPattern = hostname.length >= 5 ? new RegExp(`(?<![A-Za-z0-9-])${escape(hostname)}(?![A-Za-z0-9-])`, 'gi') : undefined;
