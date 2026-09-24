@@ -4,11 +4,13 @@
  * `.partial` staging folder is gone, and that the manifest's counts match the fixture. Every later
  * change keeps this green.
  */
+import { realpath } from 'node:fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { join, relative } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { run, type RunResult } from '../run.js';
-import { buildFixture, PLANTED, type Fixture } from './fixture.js';
+import { buildFixture, commitProjectA, PLANTED, type Fixture } from './fixture.js';
 
 async function walk(dir: string): Promise<string[]> {
   const out: string[] = [];
@@ -26,8 +28,11 @@ describe('leak test on a planted home folder', () => {
   let outDir: string;
   let contents: Map<string, string>;
 
+  let hasGit = false;
+
   beforeAll(async () => {
     fixture = await buildFixture();
+    hasGit = commitProjectA(fixture);
     outDir = join(fixture.home, 'Desktop', 'report');
     result = await run({
       home: fixture.home,
@@ -53,12 +58,15 @@ describe('leak test on a planted home folder', () => {
     await expect(stat(`${outDir}.partial`)).rejects.toThrow();
   });
 
-  it('leaves nothing planted in any output file', () => {
+  it('leaves nothing planted in any output file', async () => {
+    const realHome = await promisify(realpath.native)(fixture.home).catch(() => fixture.home);
     const never: [string, string][] = [
       ['username', PLANTED.username],
       ['hostname', PLANTED.hostname],
       ['home path', fixture.home],
       ['home path, forward slashes', fixture.home.replaceAll('\\', '/')],
+      ['home path, resolved spelling', realHome],
+      ['home path, resolved spelling, forward slashes', realHome.replaceAll('\\', '/')],
       ['Anthropic key', PLANTED.anthropicKey],
       ['OpenAI key', PLANTED.openaiKey],
       ['GitHub token', PLANTED.githubToken],
@@ -228,6 +236,13 @@ describe('leak test on a planted home folder', () => {
       ['alpha', 'home', '2', '2', '0', '1', '2026-09-20', '2026-09-20', '13091', String(Math.ceil(result.report.skills.find((s) => s.name === 'alpha')!.skillTextChars / 4))],
       ['beta', 'home|project-projB', '1', '0', '1', '1', '2026-09-20', '2026-09-20', '5564', String(Math.ceil(result.report.skills.find((s) => s.name === 'beta')!.skillTextChars / 4))],
     ]);
+  });
+
+  it('records git dates and an author count per committed skill file, and nothing for files outside a repository', () => {
+    if (!hasGit) return;
+    expect(result.report.git).toEqual([{ outputPath: 'skills/project-projA/delta/SKILL.md', firstCommit: '2026-08-01', lastCommit: '2026-09-01', authors: 2 }]);
+    expect(result.report.gitProblems).toEqual([]);
+    expect(contents.get('MANIFEST.md')).toContain('For 1 copied file inside a git repository');
   });
 
   it('reports what it read on the screen, with a count per location', () => {
