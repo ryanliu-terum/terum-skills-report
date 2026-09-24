@@ -33,8 +33,9 @@ const OFFLINE = {
   },
 };
 
+// Tests may spawn the built bundle; the offline rule still applies to them.
 const GIT_MAY_SPAWN = {
-  files: ['src/lib/git.ts'],
+  files: ['src/lib/git.ts', 'src/**/__tests__/**'],
   rules: {
     'no-restricted-imports': ['error', {
       patterns: [{ regex: NETWORK_MODULES, message: 'The collector is offline (spec §5.2). No network modules.' }],
