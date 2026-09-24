@@ -170,6 +170,32 @@ describe('leak test on a planted home folder', () => {
     expect(flagged).not.toContain('PLANTED');
   });
 
+  it('copies the scripts skills reference, refuses .env and paths that climb out, and records every miss', () => {
+    const linked = result.report.extras.filter((e) => e.kind === 'linked').map((e) => `${e.outputPath} <- ${(e.referencedBy ?? []).join(',')}`).sort();
+    expect(linked).toEqual([
+      'linked/home/workflows/helper.js <- alpha (home)',
+      'linked/plugin-market-gamma@abc123def456/scripts/g.py <- gamma-skill (plugin-market-gamma@abc123def456)',
+      'linked/projA/.claude/workflows/wf.js <- delta (project-projA)',
+    ]);
+    const misses = result.report.linkedMisses.map((m) => `${m.skill}: ${m.reference} -> ${m.reason}`).sort();
+    expect(misses).toEqual([
+      'alpha: ../.env -> .env files are never collected',
+      'delta: /etc/secrets.yaml -> absolute path outside the project and ~/.claude; not opened',
+      'delta: C:\\absolute\\nowhere.ps1 -> absolute path outside the project and ~/.claude; not opened',
+      'delta: scripts/missing.sh -> not found in the skill folder, its project or ~/.claude',
+      'gamma-skill: ${CLAUDE_PLUGIN_ROOT}/scripts/absent.py -> not found under the plugin folder',
+    ]);
+    const g = contents.get('linked/plugin-market-gamma@abc123def456/scripts/g.py')!;
+    expect(g.split('\n').length).toBe(9);
+    expect(g).toContain('KEY = os.environ["OPENAI_API_KEY"]');
+    expect(g).toContain('OPENAI_API_KEY = "[REDACTED:openai-key]"');
+    expect(g).toContain('-----BEGIN RSA PRIVATE KEY-----\n[REDACTED:private-key]\n[REDACTED:private-key]\n-----END RSA PRIVATE KEY-----');
+    const wf = contents.get('linked/projA/.claude/workflows/wf.js')!;
+    expect(wf).toContain('const token = "[REDACTED:named-secret]";');
+    expect(wf).toContain('const apiKey = process.env.API_KEY;');
+    expect(contents.get('MANIFEST.md')).toContain('Referenced, not found:');
+  });
+
   it('reports what it read on the screen, with a count per location', () => {
     const locations = Object.fromEntries(result.report.locations.map((l) => [l.location, l.detail]));
     expect(locations['~/.claude/skills']).toBe('2 skills');

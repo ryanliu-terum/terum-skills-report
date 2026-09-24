@@ -11,6 +11,7 @@ import { toCsv } from './lib/csv.js';
 import { discover } from './lib/discover.js';
 import { describeEnvironment, type Platform } from './lib/env.js';
 import { readHome } from './lib/home.js';
+import { collectLinked } from './lib/linked.js';
 import { redact } from './lib/redact.js';
 import { CSV_COLUMNS, renderCollector, renderFlagged, renderManifest, renderManifestJson } from './lib/manifest.js';
 import { Output, Scrubber, unusedFolder, type WrittenFile } from './lib/output.js';
@@ -79,7 +80,8 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   };
 
   const copier = new Copier(output, report, redact);
-  const { pluginSkillCounts } = await discover(home, copier, report, { includeClaudeMd: options.includeClaudeMd });
+  const { skills, pluginSkillCounts } = await discover(home, copier, report, { includeClaudeMd: options.includeClaudeMd });
+  await collectLinked(skills, home, copier, report);
   report.environment = describeEnvironment(home, opts.platform, undefined, pluginSkillCounts, options.includeHooks);
 
   // Usage tables: headers always, rows when transcripts were read (spec §4).
