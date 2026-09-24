@@ -42,8 +42,39 @@ describe('redact', () => {
     const { text, redactions } = redact(input);
     expect(text.split('\n')).toEqual(['A=[REDACTED:anthropic-key]', 'B=[REDACTED:openai-key]', 'C=[REDACTED:github-token]', 'D=[REDACTED:aws-access-key]', 'E=[REDACTED:slack-token]', 'F=[REDACTED:jwt]']);
     expect(redactions.map((r) => [r.line, r.rule, r.name])).toEqual([[1, 'anthropic-key', 'A'], [2, 'openai-key', 'B'], [3, 'github-token', 'C'], [4, 'aws-access-key', 'D'], [5, 'slack-token', 'E'], [6, 'jwt', 'F']]);
-    for (const r of redactions) expect(r.hint).toMatch(/^.{6}… \(\d+ chars\)$/);
+    // Hints carry the rule's fixed prefix and a length, never characters of the value.
+    expect(redactions.map((r) => r.hint.split('…')[0])).toEqual(['sk-ant-', 'sk-', 'gh*_', 'AKIA', 'xox?-', 'eyJ']);
+    for (const r of redactions) expect(r.hint).toMatch(/… \(\d+ chars\)$/);
     expect(text).not.toContain('PLANTED');
+  });
+
+  it('redacts the password inside a connection string and gives an email a length-only hint', () => {
+    const url = redact('DATABASE_URL=postgres://app:hunter22pass@db.internal:5432/app and redis://:s3cr3tpass@cache');
+    expect(url.text).toBe('DATABASE_URL=postgres://app:[REDACTED:url-credentials]@db.internal:5432/app and redis://:s3cr3tpass@cache');
+    expect(url.redactions).toEqual([{ line: 1, rule: 'url-credentials', name: 'DATABASE_URL', hint: '://user:… (12 chars)' }]);
+    expect(redact('a@b.co').redactions[0]!.hint).toBe('6 chars');
+  });
+
+  it('catches assignment spellings the review listed: PHP arrows, flags, .netrc, Basic auth, YAML block scalars, values starting with @, constants with digits', () => {
+    const cases: [string, string][] = [
+      ["'password' => 'hunter22x1',", "'password' => '[REDACTED:named-secret]',"],
+      ['mysql --password hunter22x1 -h db', 'mysql --password [REDACTED:named-secret] -h db'],
+      ['curl --api-key=abcd1234efgh https://x', 'curl --api-key=[REDACTED:named-secret] https://x'],
+      ['machine x login me password hunter22x1', 'machine x login me password [REDACTED:named-secret]'],
+      ['Authorization: Basic dXNlcjpwYXNz', 'Authorization: Basic [REDACTED:named-secret]'],
+      ['password: @dm1nP@ss!x', 'password: [REDACTED:named-secret]'],
+      ['PASSWORD=ABC123_DEF456_GHI789', 'PASSWORD=[REDACTED:named-secret]'],
+    ];
+    for (const [input, expected] of cases) {
+      const { text, redactions } = redact(input);
+      expect(text, input).toBe(expected);
+      expect(redactions, input).toHaveLength(1);
+      expect(redactions[0]!.hint, input).toMatch(/^\d+ chars$/);
+    }
+    const block = redact('db:\n  password: |\n    hunter22x1\n    second line\n  host: db\n');
+    expect(block.text).toBe('db:\n  password: |\n    [REDACTED:named-secret]\n    [REDACTED:named-secret]\n  host: db\n');
+    expect(block.redactions).toEqual([{ line: 2, rule: 'named-secret', name: 'password', hint: 'block scalar, 2 lines' }]);
+    expect(redact('  token: >-\r\n    abc\r\n').text).toBe('  token: >-\r\n    [REDACTED:named-secret]\r\n');
   });
 
   it('replaces email addresses, which are identity, and leaves scp-style git remotes and npm scopes alone', () => {
@@ -69,7 +100,7 @@ describe('redact', () => {
       expect(text, input).toBe(expected);
       expect(redactions, input).toHaveLength(1);
       expect(redactions[0]!.rule).toBe('named-secret');
-      expect(redactions[0]!.hint).toMatch(/^.{2}… \(\d+ chars\)$/);
+      expect(redactions[0]!.hint).toMatch(/^\d+ chars$/);
     }
   });
 

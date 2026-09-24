@@ -40,11 +40,14 @@ describe('collectGit', () => {
     for (const args of calls.filter((a) => a[0] === 'log')) expect(args[args.length - 2]).toBe('--');
   });
 
-  it('skips a skill that is not inside a repository and says once when git is missing', async () => {
+  it('skips a skill that is not inside a repository, records any other rev-parse failure, and says once when git is missing', async () => {
     const r = report();
     await collectGit([skill('s', '/nowhere/s', ['SKILL.md'])], r, async () => ({ ok: false, reason: 'fatal: not a git repository' }));
     expect(r.git).toEqual([]);
     expect(r.gitProblems).toEqual([]);
+    const slow = report();
+    await collectGit([skill('s', '/share/s', ['SKILL.md'])], slow, async () => ({ ok: false, reason: 'git took longer than 5s' }));
+    expect(slow.gitProblems).toEqual([{ where: 'skills/home/s', reason: 'git took longer than 5s' }]);
     const r2 = report();
     await collectGit([skill('a', '/x/a', ['SKILL.md']), skill('b', '/x/b', ['SKILL.md'])], r2, async () => ({ ok: false, reason: 'git is not installed' }));
     expect(r2.gitProblems).toEqual([{ where: 'git', reason: 'git is not installed; no commit dates or author counts' }]);

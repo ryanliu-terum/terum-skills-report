@@ -93,6 +93,56 @@ reopens a walked fork. Where a note narrows what leaves the machine, §2.6 (neve
 - **Git error messages** have their paths cut out before they are recorded, because git spells
   paths its own way.
 
+## From the adversarial review (2026-09-24)
+
+An independent review of the repository at its release-ready commit, pointed at the handoff's two
+questions (does anything leave that the manifest does not list; does anything get opened that the
+spec does not name), reproduced three leaks and listed a dozen smaller gaps. Every finding was
+re-read against the code and fixed with a planted case in the leak test unless noted.
+
+- **UTF-16 text was treated as binary** (a NUL in every other byte) and copied unscanned; a
+  PowerShell script saved by Windows shipped its key. Encoding is now detected by byte-order mark
+  or by the NUL pattern, the text is decoded, redacted, scrubbed and written back in its own
+  encoding with its mark, so the script still runs.
+- **Error messages carried paths.** A transcript that could not be opened recorded Node's message,
+  which names the file and its folder, and the folder is the project path with dashes and the
+  username in it. Every recorded reason is now the error code (`EBUSY`, `EACCES`), never the
+  message.
+- **The never-collected list applied to linked files only.** A `.env`, an SSH key, a log or a
+  `settings.local.json` inside a skill folder shipped with the skill. One list (`src/lib/never.ts`)
+  now guards every copy path, and `__pycache__` and virtual environments are skipped folders,
+  because compiled Python carries the absolute source path.
+- **A project above the home folder** (`C:\`, `/Users`) listed in `~/.claude.json` made
+  `--hash-labels` show the username inside display paths. Ancestors of home are never projects.
+- **Hints carried value characters:** six for shapes, so an email hint showed `ryan.l…` and a
+  connection-string password's first six letters. A hint is now the rule's fixed prefix (`sk-ant-`)
+  or a length only.
+- **Passwords inside URLs** (`postgres://app:pass@host`) were missed by every rule; they are a
+  shape rule now. Also caught since: PHP `=>` assignments, `--password value` flags, `.netrc`
+  lines, `Authorization: Basic <short base64>`, YAML block scalars with the value on the next
+  lines, values starting with `@`, and upper-case values with digits.
+- **A git failure other than "not a repository"** (a timeout, `dubious ownership` on a share) was
+  treated as not a repository, so the manifest implied the folder had been checked. It is a
+  recorded problem now. File names go to git as `:(literal)name`.
+- **A plugin's cache folder had no application-source guard;** a plugin installed from a whole
+  repository shipped `src/` files a skill mentioned. The machinery rule applies to plugins too.
+- **A write failure** (quarantine, a path too long for this Windows, a full disk) aborted the run;
+  it is a per-file reason now. **An existing output folder** failed only at the final rename; it
+  is refused before any work.
+- **The bare account name** is scrubbed at word boundaries when it is five characters or more,
+  like the hostname, and percent-encoded home paths are a known spelling.
+- **Any machine's home folder** (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>`) becomes `~`,
+  not only this machine's: a skill written on a teammate's laptop carried their Mac home path in
+  a command example, and §5.5 says no full home path at all.
+- **Smaller:** labels that differ only by case are made distinct; the name rule skips lines over
+  20,000 characters (its scan is quadratic; the shape rules still run); transcripts over 256 MiB are
+  listed, not read; a symbolic link inside a skill folder is followed only when its target stays in
+  the folder; non-Markdown files in `commands/` and `agents/` are listed as not copied; `FLAGGED.md`
+  lists every file copied without a scan; the screen says that a synced Desktop syncs the folder.
+- **Left as noted:** inline sidechain records in a main transcript are dropped in favour of the
+  nested files (none seen in 275 local transcripts); a `.partial` folder of the same name from an
+  earlier run is replaced.
+
 ## Screen and manifest (spec §3, §4)
 
 - The output is built in a `.partial` sibling and renamed at the end, so a crash leaves a folder

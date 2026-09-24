@@ -142,10 +142,17 @@ export function renderManifest(report: Report, files: readonly WrittenFile[]): s
 
 export function renderFlagged(report: Report): string {
   const lines = ['# Redactions to confirm', ''];
-  if (report.redactions.length === 0) { lines.push('No line was redacted.', ''); return lines.join('\n'); }
-  lines.push(`${report.redactions.length} value${report.redactions.length === 1 ? '' : 's'} replaced with \`[REDACTED:<rule>]\`. The value itself is not recorded here; the hint is its first characters and its length. If a line below is not a secret, restore it from your own copy before you zip, or leave it and Terum will treat the skill as *not evaluable*.`, '', '| File | Line | Rule | Name | Hint |', '|---|---|---|---|---|');
-  for (const r of report.redactions) lines.push(`| \`${r.outputPath}\` | ${r.line} | ${r.rule} | ${r.name || '—'} | ${r.hint} |`);
-  lines.push('');
+  if (report.redactions.length === 0) lines.push('No line was redacted.', '');
+  else {
+    lines.push(`${report.redactions.length} value${report.redactions.length === 1 ? '' : 's'} replaced with \`[REDACTED:<rule>]\`. The value itself is not recorded here; the hint is the rule's fixed prefix and the value's length. If a line below is not a secret, restore it from your own copy before you zip, or leave it and Terum will treat the skill as *not evaluable*.`, '', '| File | Line | Rule | Name | Hint |', '|---|---|---|---|---|');
+    for (const r of report.redactions) lines.push(`| \`${r.outputPath}\` | ${r.line} | ${r.rule} | ${r.name || '—'} | ${r.hint} |`);
+    lines.push('');
+  }
+  if (report.unscanned.length > 0) {
+    lines.push('## Copied without a scan', '', `${report.unscanned.length} file${report.unscanned.length === 1 ? ' is' : 's are'} binary and could not be checked for secrets or identity. Please open ${report.unscanned.length === 1 ? 'it' : 'each'} or delete ${report.unscanned.length === 1 ? 'it' : 'them'} before you zip.`, '');
+    for (const p of report.unscanned) lines.push(`- \`${p}\``);
+    lines.push('');
+  }
   return lines.join('\n');
 }
 

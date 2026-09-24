@@ -5,7 +5,7 @@
  */
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 
 export interface Problem {
   /** Written relative to `~` or to a project label; never a full path (spec §5.5). */
@@ -49,7 +49,19 @@ export interface Home {
   problems: Problem[];
 }
 
-export const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+/**
+ * A system error's code (`ENOENT`, `EACCES`, `EBUSY`), never its message. Node's messages carry
+ * the full path of the file, in a spelling the output scrubber may not know; the review of
+ * 2026-09-24 saw a locked transcript put the project folder name, which is the project path with
+ * dashes and the username in it, into the manifest this way.
+ */
+export const errorCode = (error: unknown): string => {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (typeof code === 'string' && code.length > 0) return code;
+  return error instanceof Error ? error.name : 'error';
+};
+
+export const reason = (error: unknown): string => `could not read (${errorCode(error)})`;
 
 export async function readJson(path: string, where: string, problems: Problem[]): Promise<Record<string, unknown> | undefined> {
   let text: string;
@@ -78,12 +90,13 @@ export const hashLabel = (path: string): string => createHash('sha256').update(p
  */
 export function assignLabels(roots: readonly string[], hashLabels: boolean): Map<string, string> {
   const labels = new Map<string, string>();
+  // Compared lower-cased: `API` and `api` are one folder on Windows and macOS.
   const used = new Set<string>();
   for (const root of roots) {
     const base = hashLabels ? hashLabel(root) : sanitizeLabel(basename(root)) || 'project';
     let label = base;
-    for (let n = 2; used.has(label); n++) label = `${base}-${n}`;
-    used.add(label);
+    for (let n = 2; used.has(label.toLowerCase()); n++) label = `${base}-${n}`;
+    used.add(label.toLowerCase());
     labels.set(root, label);
   }
   return labels;
@@ -111,9 +124,11 @@ export async function readHome(root: string, options: { hashLabels: boolean }): 
     for (const [path, entry] of Object.entries(projects)) {
       const projectRoot = resolve(path);
       if (roots.includes(projectRoot)) continue;
-      // The home folder itself, opened as a project: its `.claude` is the home one, already read,
-      // and its base name is the username, which must not become a label (spec §5.5).
-      if (projectRoot.toLowerCase() === homeRoot.toLowerCase()) continue;
+      // The home folder itself, or a folder above it (`C:\`, `/Users`), opened as a project: its
+      // `.claude` is not a project's, and its base name or its paths would carry the username
+      // into a label or a display path (spec §5.5).
+      const rel = relative(projectRoot, homeRoot);
+      if (rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))) continue;
       if (!(await isDirectory(projectRoot))) continue; // a folder Claude Code once opened that no longer exists
       roots.push(projectRoot);
       mcpByRoot.set(projectRoot, Object.keys(asObject(asObject(entry)?.['mcpServers']) ?? {}).sort());
