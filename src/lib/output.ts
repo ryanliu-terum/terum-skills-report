@@ -6,7 +6,7 @@
  */
 import { createHash } from 'node:crypto';
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 
 export interface WrittenFile {
   /** Path inside the output folder, forward slashes. */
@@ -54,8 +54,9 @@ export class Scrubber {
     }
     // Longest first so `C:\\Users\\x` wins over `C:\Users\x` inside JSON.
     const ordered = [...spellings].filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
-    // Windows paths are case-insensitive and users type them every which way.
-    this.homePatterns = ordered.map((s) => new RegExp(escape(s), sep === '\\' ? 'gi' : 'g'));
+    // A Windows path is case-insensitive wherever this runs, and users type them every which way.
+    const windowsShaped = (s: string): boolean => /^(?:file:\/\/\/)?[A-Za-z]:/.test(s);
+    this.homePatterns = ordered.map((s) => new RegExp(escape(s), windowsShaped(s) ? 'gi' : 'g'));
     // Short hostnames are ordinary words; replacing them would corrupt prose. Five characters and a
     // word boundary keeps `dev` and `mac` alone while catching `ryans-macbook-pro`.
     this.hostPattern = hostname.length >= 5 ? new RegExp(`(?<![A-Za-z0-9-])${escape(hostname)}(?![A-Za-z0-9-])`, 'gi') : undefined;
