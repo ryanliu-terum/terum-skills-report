@@ -72,6 +72,10 @@ reopens a walked fork. Where a note narrows what leaves the machine, §2.6 (neve
   added; `Authorization: Bearer <token>` redacts the token, not the word.
 - **Email addresses are a redaction rule.** §5.5 allows no email in the bundle and skills carry
   `author: Name <email>` lines. scp-style git remotes and npm scopes are left alone.
+- **Hook commands take the redaction pass too** when `--include-hooks` is on. They are written
+  into the manifest rather than copied as files, so they bypassed the copier; on one machine a hook
+  command carried a `--secret-header "x-…-secret: <uuid>"` argument. Redactions there are listed
+  in `FLAGGED.md` against `MANIFEST.md`, with the hook's position as the line.
 - **Files over 2 MiB are not copied** and are listed; **binary files** (a NUL byte in the first
   8 KiB) are copied without a scan and listed as unscanned; `node_modules` and `.git` inside a
   skill folder are not copied and are listed.

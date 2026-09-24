@@ -82,6 +82,7 @@ describe('leak test on a planted home folder', () => {
       ['subagent prompt', 'PLANTED_SUBAGENT_TEXT'],
       ['skill body in transcript', PLANTED.skillBodyInTranscript],
       ['hook command', 'PLANTED_HOOK_PATH'],
+      ['hook secret', PLANTED.hookSecret],
       ['machine id', PLANTED.machineId],
       ['user id', PLANTED.userId],
       ['email', PLANTED.email],

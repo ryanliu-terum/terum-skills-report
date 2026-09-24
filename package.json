@@ -1,6 +1,6 @@
 {
   "name": "terum-skills-report",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "description": "Offline collector for Terum's free Claude Code skills report. Writes your skills, the scripts they reference and locally derived usage counts to one folder you review, zip and send yourself. No network, no install, nothing left behind.",
   "license": "Apache-2.0",
   "type": "module",

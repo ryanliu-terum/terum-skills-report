@@ -48,10 +48,14 @@ describe('discovery flags', () => {
     const opts = base(out);
     opts.options.includeHooks = true;
     const { report } = await run(opts);
-    expect(report.environment.hookCommands).toEqual([`SessionStart: ${PLANTED.hookCommand} --start`, `Stop: ${PLANTED.hookCommand}`]);
+    // The secret in the Stop hook's command line is redacted like any copied file and listed in FLAGGED.md.
+    expect(report.environment.hookCommands).toEqual([`SessionStart: ${PLANTED.hookCommand} --start`, `Stop: ${PLANTED.hookCommand} --secret-header "x-control-secret: [REDACTED:named-secret]"`]);
+    expect(report.redactions).toContainEqual({ outputPath: 'MANIFEST.md', line: 2, rule: 'named-secret', name: 'x-control-secret', hint: 'PL… (21 chars)' });
     const manifest = await readFile(join(out, 'MANIFEST.md'), 'utf8');
     expect(manifest).toContain('hook commands (included by `--include-hooks`)');
     expect(manifest).not.toContain(fixture.home);
+    expect(manifest).not.toContain(PLANTED.hookSecret);
+    expect(await readFile(join(out, 'FLAGGED.md'), 'utf8')).toContain('| `MANIFEST.md` | 2 | named-secret | x-control-secret |');
   });
 
   it('--hash-labels names project sources by hash, and --no-usage says so', async () => {

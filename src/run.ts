@@ -106,6 +106,14 @@ export async function run(opts: RunOptions): Promise<RunResult> {
     rows = { summary: summaryRows(scanned.firings, sourceLookup(skills)), firings: scanned.firings, sessions: scanned.sessions };
   }
   report.environment = describeEnvironment(home, opts.platform, claudeCodeVersion, pluginSkillCounts, options.includeHooks);
+  // Hook commands go into the manifest, not through the copier, so they take the redaction pass here.
+  if (report.environment.hookCommands !== undefined) {
+    report.environment.hookCommands = report.environment.hookCommands.map((command, i) => {
+      const { text, redactions } = redact(command);
+      report.redactions.push(...redactions.map((r) => ({ outputPath: 'MANIFEST.md', ...r, line: i + 1 })));
+      return text;
+    });
+  }
 
   await output.mkdir('skills');
   await output.mkdir('linked');

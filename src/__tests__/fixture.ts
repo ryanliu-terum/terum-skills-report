@@ -30,6 +30,7 @@ export const PLANTED = {
   subagentPrompt: 'PLANTED_SUBAGENT_TEXT research the eligibility API',
   skillBodyInTranscript: 'PLANTED_SKILL_BODY_IN_TRANSCRIPT',
   hookCommand: 'node PLANTED_HOOK_PATH/.claude/hooks/capture.js',
+  hookSecret: 'PLANTEDHOOKSECRET0123',
   machineId: 'PLANTED_MACHINE_ID_0000',
   userId: 'PLANTED_USER_ID_0000',
   email: 'planted@example.com',
@@ -87,7 +88,7 @@ export async function buildFixture(): Promise<Fixture> {
   await write(H('.claude', 'settings.json'), JSON.stringify({
     enabledPlugins: { 'gamma@market': true, 'off@market': false },
     hooks: {
-      Stop: [{ hooks: [{ type: 'command', command: PLANTED.hookCommand }] }],
+      Stop: [{ hooks: [{ type: 'command', command: `${PLANTED.hookCommand} --secret-header "x-control-secret: ${PLANTED.hookSecret}"` }] }],
       SessionStart: [{ matcher: 'startup', hooks: [{ type: 'command', command: `${PLANTED.hookCommand} --start` }] }],
     },
   }, null, 2));
