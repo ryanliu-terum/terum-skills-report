@@ -15,7 +15,7 @@ export const PLANTED = {
   anthropicKey: 'sk-ant-api03-PLANTEDKEYVALUE0123456789abcdefghijklmnopqrstuvwxyz',
   openaiKey: 'sk-PLANTEDOPENAI0123456789abcdefghijklmn',
   githubToken: 'ghp_PLANTEDGITHUB0123456789abcdefghijklmnopqr',
-  awsKey: 'AKIAPLANTED0123456789',
+  awsKey: 'AKIAPLANTED012345678',
   slackToken: 'xoxb-PLANTED-0123456789-abcdefghij',
   jwt: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJQTEFOVEVEIn0.PLANTEDSIGNATURE0123456789',
   privateKeyBody: 'MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCPLANTEDPRIVATEKEYBODY',

@@ -37,6 +37,8 @@ export interface PluginInstall {
 export interface Home {
   root: string;
   claudeDir: string;
+  /** `--hash-labels`: project folder names are hidden everywhere, including display paths. */
+  hashLabels: boolean;
   /** `~/.claude.json`: projects Claude Code has been opened in, MCP server names. */
   projects: Project[];
   mcpServers: string[];
@@ -97,7 +99,7 @@ async function isDirectory(path: string): Promise<boolean> {
 export async function readHome(root: string, options: { hashLabels: boolean }): Promise<Home> {
   const problems: Problem[] = [];
   const claudeDir = join(root, '.claude');
-  const home: Home = { root, claudeDir, projects: [], mcpServers: [], hookEvents: [], hookCommands: [], plugins: [], problems };
+  const home: Home = { root, claudeDir, hashLabels: options.hashLabels, projects: [], mcpServers: [], hookEvents: [], hookCommands: [], plugins: [], problems };
 
   const config = await readJson(join(root, '.claude.json'), '~/.claude.json', problems);
   if (config !== undefined) {
