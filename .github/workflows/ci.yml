@@ -1,0 +1,73 @@
+name: CI
+
+# Gates on every push and pull request, on Linux and Windows: lint, typecheck, tests (including the
+# leak test on a planted fixture home folder), the one-file bundle, and a packed-tarball inspection
+# that proves the package ships only package.json, README, LICENSE and dist/index.js.
+# Hermetic: no secrets; the only network use is npm's registry for `npm ci`.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: node dist/index.js --version
+
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pack and inspect the tarball
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          npm pack --json --pack-destination release > release/pack.json
+          # shellcheck disable=SC2016 # the single-quoted block is JavaScript handed to node -e, not shell
+          node -e '
+            const [p] = JSON.parse(require("fs").readFileSync("release/pack.json","utf8"));
+            const files = p.files.map(f => f.path).sort();
+            const want = ["LICENSE","README.md","dist/index.js","package.json"];
+            if (JSON.stringify(files) !== JSON.stringify(want)) { console.error("tarball files:", files, "expected:", want); process.exit(1); }
+            console.log(`${p.name}@${p.version} ${p.entryCount} files ${p.integrity}`);
+          '
+          f=$(node -p 'JSON.parse(require("fs").readFileSync("release/pack.json","utf8"))[0].filename')
+          tmp=$(mktemp -d); cp "release/$f" "$tmp/"
+          (cd "$tmp" && npm init -y >/dev/null && npm install --no-audit --no-fund "./$f" >/dev/null)
+          "$tmp/node_modules/.bin/terum-skills-report" --version

@@ -1,0 +1,57 @@
+name: Release
+
+# One explicit dispatch per release, on main, for a named version at a named commit. The gates run
+# again, the bundle is built, and the package is published with npm provenance so the published file
+# links to this exact commit (spec §5.1). The tag is created only after the publish succeeds.
+#
+# One-time setup: an npm Trusted Publisher for ryanliu-terum/terum-skills-report on this workflow
+# (docs.npmjs.com/trusted-publishers), and a GitHub environment named `npm` with a required reviewer.
+# Trusted publishing needs npm >= 11.5.1 on Node >= 22.14. Nothing here bumps versions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: 'Version to release; must equal package.json "version" at the dispatched commit (e.g. 1.0.0)'
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Check the version matches
+        env:
+          EXPECTED: ${{ inputs.expected_version }}
+        run: |
+          set -euo pipefail
+          actual=$(node -p 'require("./package.json").version')
+          if [ "$actual" != "$EXPECTED" ]; then echo "package.json is $actual, dispatched $EXPECTED"; exit 1; fi
+          if git rev-parse -q --verify "refs/tags/v$EXPECTED" >/dev/null; then echo "tag v$EXPECTED already exists"; exit 1; fi
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm publish --provenance --access public
+      - name: Tag
+        env:
+          EXPECTED: ${{ inputs.expected_version }}
+        run: |
+          set -euo pipefail
+          git tag "v$EXPECTED" "$GITHUB_SHA"
+          git push origin "v$EXPECTED"

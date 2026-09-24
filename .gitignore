@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.DS_Store
+
+# Agent harness and local planning are not tracked here.
+.claude/
+.planning/
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.local.md

@@ -1,0 +1,46 @@
+{
+  "name": "terum-skills-report",
+  "version": "0.0.1",
+  "description": "Offline collector for Terum's free Claude Code skills report. Writes your skills, the scripts they reference and locally derived usage counts to one folder you review, zip and send yourself. No network, no install, nothing left behind.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryanliu-terum/terum-skills-report.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ryanliu-terum/terum-skills-report/issues"
+  },
+  "homepage": "https://github.com/ryanliu-terum/terum-skills-report#readme",
+  "keywords": [
+    "claude-code",
+    "skills",
+    "terum"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "terum-skills-report": "./dist/index.js"
+  },
+  "files": [
+    "dist/index.js",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/bundle.mjs",
+    "prepack": "npm run typecheck && npm run build",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^4.1.11"
+  }
+}
