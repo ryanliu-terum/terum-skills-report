@@ -136,4 +136,48 @@ describe('leak test on a planted home folder', () => {
   it('labels projects by folder name and skips a project folder that no longer exists', () => {
     expect(result.report.problems.map((p) => p.where)).not.toContain(expect.stringContaining('deleted-project'));
   });
+
+  it('finds every skill folder at home, in projects and in plugins, and counts identical content once', () => {
+    const skills = result.report.skills.map((s) => `${s.source}/${s.name}`).sort();
+    expect(skills).toEqual(['home/alpha', 'home/beta', 'plugin-market-gamma@abc123def456/gamma-skill', 'project-projA/delta', 'project-projB/beta']);
+    expect(new Set(result.report.skills.map((s) => s.contentHash)).size).toBe(4);
+    expect(result.report.skills.find((s) => s.name === 'alpha')!.readFrom).toBe('~/.claude/skills/alpha');
+    expect(result.report.skills.find((s) => s.name === 'delta')!.readFrom).toBe('~/dev/projA/.claude/skills/delta');
+    expect(result.report.skills.find((s) => s.source === 'project-projB')!.readFrom).toBe('projB/.claude/skills/beta');
+    expect(contents.has('skills/home/alpha/SKILL.md')).toBe(true);
+    expect(contents.has('skills/home/alpha/scripts/run.sh')).toBe(true);
+    expect([...contents.keys()].filter((p) => p.includes('not-a-skill'))).toEqual([]);
+  });
+
+  it('copies commands and agents at home and project level, and nothing else from those folders', () => {
+    const extras = result.report.extras.map((e) => `${e.kind}:${e.outputPath}`).sort();
+    expect(extras.filter((e) => e.startsWith('command') || e.startsWith('agent'))).toEqual(['agent:agents/home/reviewer.md', 'agent:agents/project-projB/planner.md', 'command:commands/home/deploy.md', 'command:commands/project-projA/pr.md']);
+    expect([...contents.keys()].filter((p) => p.startsWith('claude-md/'))).toEqual([]);
+  });
+
+  it('redacts only the value, keeps variable reads, and lists every redaction in FLAGGED.md', () => {
+    const script = contents.get('skills/home/alpha/scripts/run.sh')!;
+    expect(script).toContain('ANTHROPIC_API_KEY=[REDACTED:anthropic-key]\n');
+    expect(script).toContain('echo "$ANTHROPIC_API_KEY"');
+    expect(script).toContain('AUTH_MODE=$MODE');
+    expect(script).toContain('author=someone');
+    expect(script).toContain('password: [REDACTED:named-secret]');
+    expect(script.split('\n').length).toBe(11);
+    const rules = result.report.redactions.filter((r) => r.outputPath === 'skills/home/alpha/scripts/run.sh').map((r) => `${r.line}:${r.rule}:${r.name}`);
+    expect(rules).toEqual(['2:anthropic-key:ANTHROPIC_API_KEY', '5:jwt:Authorization', '6:aws-access-key:AWS_ACCESS_KEY_ID', '7:slack-token:SLACK_TOKEN', '8:named-secret:password']);
+    const flagged = contents.get('FLAGGED.md')!;
+    expect(flagged).toContain('| `skills/home/alpha/scripts/run.sh` | 2 | anthropic-key | ANTHROPIC_API_KEY | sk-ant… (');
+    expect(flagged).not.toContain('PLANTED');
+  });
+
+  it('reports what it read on the screen, with a count per location', () => {
+    const locations = Object.fromEntries(result.report.locations.map((l) => [l.location, l.detail]));
+    expect(locations['~/.claude/skills']).toBe('2 skills');
+    expect(locations['~/dev/projA/.claude/skills']).toBe('1 skill');
+    expect(locations['projB/.claude/skills']).toBe('1 skill   (1 identical to ~/.claude/skills copies)');
+    expect(locations['~/.claude/plugins']).toBe('1 skill from 1 plugin');
+    expect(locations['~/.claude/commands, .claude/agents']).toBe('2 commands, 2 agents');
+    expect(result.report.environment.plugins.find((p) => p.id === 'gamma@market')!.skills).toBe(1);
+    expect(result.report.problems).toContainEqual({ where: '~/.claude/plugins/cache/market/missing/1.0.0', reason: 'plugin folder listed in installed_plugins.json is not on disk' });
+  });
 });
