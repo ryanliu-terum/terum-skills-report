@@ -1,0 +1,93 @@
+/**
+ * The collector, one stage after another (spec §2, §3). Every stage records its failures on the
+ * report and returns; nothing here throws for a bad file, a missing folder or a slow git. The only
+ * exception is failing to create the output folder itself, which the bin reports and exits on.
+ */
+import { stat } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { CliOptions } from './cli/args.js';
+import { toCsv } from './lib/csv.js';
+import { describeEnvironment, type Platform } from './lib/env.js';
+import { readHome } from './lib/home.js';
+import { CSV_COLUMNS, renderCollector, renderFlagged, renderManifest, renderManifestJson } from './lib/manifest.js';
+import { Output, Scrubber, unusedFolder, type WrittenFile } from './lib/output.js';
+import type { Report } from './lib/report.js';
+
+export interface RunOptions {
+  /** The home folder. The CLI passes `os.homedir()`; tests pass a fixture. */
+  home: string;
+  hostname: string;
+  platform: Platform;
+  /** The flags as typed, for collector.txt. */
+  argv: readonly string[];
+  options: CliOptions;
+  now: Date;
+  version: string;
+  commit: string;
+  sha256: string;
+}
+
+export interface RunResult {
+  report: Report;
+  files: WrittenFile[];
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try { return (await stat(path)).isDirectory(); } catch { return false; }
+}
+
+export async function run(opts: RunOptions): Promise<RunResult> {
+  const { options } = opts;
+  const home = await readHome(opts.home, { hashLabels: options.hashLabels });
+  const scrubber = new Scrubber(opts.home, opts.hostname);
+
+  const date = opts.now.toISOString().slice(0, 10);
+  let desktopFallback = false;
+  let final: string;
+  if (options.out !== undefined) final = options.out;
+  else {
+    let desktop = join(opts.home, 'Desktop');
+    if (!(await isDirectory(desktop))) { desktop = opts.home; desktopFallback = true; }
+    final = await unusedFolder(desktop, `terum-skills-report-${date}`);
+  }
+  const output = new Output(final, scrubber);
+  await output.open();
+
+  const report: Report = {
+    version: opts.version,
+    commit: opts.commit,
+    sha256: opts.sha256,
+    command: ['terum-skills-report', ...opts.argv].join(' '),
+    startedAt: opts.now.toISOString(),
+    flags: { usage: options.usage, includeHooks: options.includeHooks, includeClaudeMd: options.includeClaudeMd, hashLabels: options.hashLabels },
+    outputFolder: scrubber.scrub(output.final.replaceAll('\\', '/')),
+    desktopFallback,
+    skills: [],
+    extras: [],
+    linkedMisses: [],
+    redactions: [],
+    unscanned: [],
+    git: [],
+    gitProblems: [],
+    usage: { status: options.usage ? 'no-session-data' : 'skipped-by-flag', projectFolders: 0, sessions: 0, headlessSessionsSkipped: 0, subagentTranscripts: 0, filesSkipped: [], linesSkipped: 0, firings: 0, sessionsWithFirings: 0, firstDay: undefined, lastDay: undefined },
+    environment: describeEnvironment(home, opts.platform, undefined, new Map(), options.includeHooks),
+    locations: [],
+    problems: [...home.problems],
+  };
+
+  // Usage tables: headers always, rows when transcripts were read (spec §4).
+  await output.mkdir('skills');
+  await output.mkdir('linked');
+  await output.mkdir('commands');
+  await output.mkdir('agents');
+  for (const [name, columns] of Object.entries(CSV_COLUMNS)) await output.writeText(`usage/${name}.csv`, toCsv(columns, []));
+
+  await output.writeText('collector.txt', renderCollector(report));
+  await output.writeText('FLAGGED.md', renderFlagged(report));
+  // The manifest lists every file, so it is written last and lists itself by name only.
+  const listed = [...output.files];
+  await output.writeText('manifest.json', renderManifestJson(report, listed));
+  await output.writeText('MANIFEST.md', renderManifest(report, [...output.files]));
+  await output.close();
+  return { report, files: output.files };
+}

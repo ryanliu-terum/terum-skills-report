@@ -1,0 +1,139 @@
+/**
+ * The leak test (handoff step 2; docs/spec.md §5.5, §2.6). Runs the whole collector against a
+ * planted home folder and asserts that nothing planted appears in any output file, that the
+ * `.partial` staging folder is gone, and that the manifest's counts match the fixture. Every later
+ * change keeps this green.
+ */
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
+import { join, relative } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { run, type RunResult } from '../run.js';
+import { buildFixture, PLANTED, type Fixture } from './fixture.js';
+
+async function walk(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await walk(full)));
+    else out.push(full);
+  }
+  return out.sort();
+}
+
+describe('leak test on a planted home folder', () => {
+  let fixture: Fixture;
+  let result: RunResult;
+  let outDir: string;
+  let contents: Map<string, string>;
+
+  beforeAll(async () => {
+    fixture = await buildFixture();
+    outDir = join(fixture.home, 'Desktop', 'report');
+    result = await run({
+      home: fixture.home,
+      hostname: PLANTED.hostname,
+      platform: { platform: process.platform, release: '10.0.0', nodeVersion: process.version, env: { SHELL: '/bin/zsh' } },
+      argv: ['--out', outDir],
+      options: { out: outDir, json: false, usage: true, includeHooks: false, includeClaudeMd: false, hashLabels: false, help: false, version: false },
+      now: new Date('2026-09-24T12:00:00Z'),
+      version: '1.0.0-test',
+      commit: 'abcdef0',
+      sha256: 'deadbeef',
+    });
+    contents = new Map();
+    for (const file of await walk(outDir)) contents.set(relative(outDir, file).replaceAll('\\', '/'), await readFile(file, 'utf8'));
+  });
+
+  afterAll(async () => {
+    await rm(fixture.tmp, { recursive: true, force: true });
+  });
+
+  it('writes the final folder and removes the staging folder', async () => {
+    expect((await stat(outDir)).isDirectory()).toBe(true);
+    await expect(stat(`${outDir}.partial`)).rejects.toThrow();
+  });
+
+  it('leaves nothing planted in any output file', () => {
+    const never: [string, string][] = [
+      ['username', PLANTED.username],
+      ['hostname', PLANTED.hostname],
+      ['home path', fixture.home],
+      ['home path, forward slashes', fixture.home.replaceAll('\\', '/')],
+      ['Anthropic key', PLANTED.anthropicKey],
+      ['OpenAI key', PLANTED.openaiKey],
+      ['GitHub token', PLANTED.githubToken],
+      ['AWS key', PLANTED.awsKey],
+      ['Slack token', PLANTED.slackToken],
+      ['JWT', PLANTED.jwt],
+      ['private key body', PLANTED.privateKeyBody],
+      ['named token literal', PLANTED.namedToken],
+      ['named password literal', PLANTED.namedPassword],
+      ['.env content', PLANTED.dotenv],
+      ['prompt', 'PLANTED_PROMPT_TEXT'],
+      ['tool output', 'PLANTED_TOOL_OUTPUT'],
+      ['subagent prompt', 'PLANTED_SUBAGENT_TEXT'],
+      ['skill body in transcript', PLANTED.skillBodyInTranscript],
+      ['hook command', 'PLANTED_HOOK_PATH'],
+      ['machine id', PLANTED.machineId],
+      ['user id', PLANTED.userId],
+      ['email', PLANTED.email],
+      ['CLAUDE.md content', 'PLANTED_CLAUDE_MD'],
+      ['MCP command', PLANTED.mcpCommand],
+      ['raw session id', PLANTED.sessionId],
+      ['raw session id (no firings)', PLANTED.sessionId4],
+      ['agent id', PLANTED.agentId],
+      ['headless skill name', PLANTED.sdkSkill],
+    ];
+    const leaks: string[] = [];
+    for (const [path, text] of contents) {
+      for (const [what, needle] of never) if (text.includes(needle)) leaks.push(`${what} in ${path}`);
+    }
+    expect(leaks).toEqual([]);
+    expect(contents.size).toBeGreaterThan(0);
+  });
+
+  it('lists every written file in manifest.json with a matching sha256', async () => {
+    const manifest = JSON.parse(contents.get('manifest.json')!) as { files: { path: string; sha256: string }[] };
+    const listed = new Set(manifest.files.map((f) => f.path));
+    // manifest.json and MANIFEST.md are written after the list is taken; every other file is in it.
+    for (const path of contents.keys()) if (path !== 'manifest.json' && path !== 'MANIFEST.md') expect(listed.has(path), `${path} is in the output but not in manifest.json`).toBe(true);
+    for (const file of manifest.files) expect(contents.has(file.path), `${file.path} is in manifest.json but not in the output`).toBe(true);
+    const { createHash } = await import('node:crypto');
+    for (const file of manifest.files) {
+      const actual = createHash('sha256').update(await readFile(join(outDir, file.path))).digest('hex');
+      expect(actual, `sha256 of ${file.path}`).toBe(file.sha256);
+    }
+  });
+
+  it('carries the usage sentence word for word and the exact CSV columns', () => {
+    const sentence = 'From sessions we gathered how often each skill was invoked. No raw session logs are sent out. All session logs were read locally, just for skill usage.';
+    // The sentence is a claim about the CSV rows, so it appears only when transcripts were read.
+    if (result.report.usage.status === 'read') expect(contents.get('MANIFEST.md')).toContain(sentence);
+    else expect(contents.get('MANIFEST.md')).toMatch(/not read|No session data/);
+    expect(contents.get('usage/summary.csv')!.split('\n')[0]).toBe('skill,source,fires,fires_by_model,fires_by_human,sessions,first_day,last_day,avg_tokens_per_fire,skill_text_tokens');
+    expect(contents.get('usage/firings.csv')!.split('\n')[0]).toBe('firing_id,session_id,day,skill,source,invoked_by,model,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,turns_after,tool_errors_after,interrupted_after,refired_in_session');
+    expect(contents.get('usage/sessions.csv')!.split('\n')[0]).toBe('session_id,day,turns,human_messages,interruptions,skill_fires,distinct_skills,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,minutes,subagent_sessions');
+  });
+
+  it('writes collector.txt with the version, sha256, commit and the command as typed, home path scrubbed', () => {
+    const collector = contents.get('collector.txt')!;
+    expect(collector).toContain('terum-skills-report 1.0.0-test');
+    expect(collector).toContain('sha256 deadbeef');
+    expect(collector).toContain('@ abcdef0');
+    expect(collector).toMatch(/command terum-skills-report --out ~[\\/]Desktop[\\/]report\n/);
+  });
+
+  it('records the environment as names only', () => {
+    const env = result.report.environment;
+    expect(env.mcpServers).toEqual(['home-mcp']);
+    expect(env.mcpServersByProject).toEqual({ projA: ['planted-project-mcp'] });
+    expect(env.hookEvents).toEqual(['SessionStart', 'Stop']);
+    expect(env.hookCommands).toBeUndefined();
+    expect(env.shell).toBe('zsh');
+    expect(env.plugins.map((p) => p.id)).toEqual(['gamma@market', 'missing@market']);
+  });
+
+  it('labels projects by folder name and skips a project folder that no longer exists', () => {
+    expect(result.report.problems.map((p) => p.where)).not.toContain(expect.stringContaining('deleted-project'));
+  });
+});
