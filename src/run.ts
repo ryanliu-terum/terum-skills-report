@@ -7,7 +7,7 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CliOptions } from './cli/args.js';
 import { Copier } from './lib/copier.js';
-import { toCsv } from './lib/csv.js';
+import { toCsv, type CsvValue } from './lib/csv.js';
 import { discover } from './lib/discover.js';
 import { describeEnvironment, type Platform } from './lib/env.js';
 import { readHome } from './lib/home.js';
@@ -16,6 +16,7 @@ import { redact } from './lib/redact.js';
 import { CSV_COLUMNS, renderCollector, renderFlagged, renderManifest, renderManifestJson } from './lib/manifest.js';
 import { Output, Scrubber, unusedFolder, type WrittenFile } from './lib/output.js';
 import type { Report } from './lib/report.js';
+import { scanTranscripts, sourceLookup, summaryRows } from './lib/usage/rows.js';
 
 export interface RunOptions {
   /** The home folder. The CLI passes `os.homedir()`; tests pass a fixture. */
@@ -82,14 +83,23 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   const copier = new Copier(output, report, redact);
   const { skills, pluginSkillCounts } = await discover(home, copier, report, { includeClaudeMd: options.includeClaudeMd });
   await collectLinked(skills, home, copier, report);
-  report.environment = describeEnvironment(home, opts.platform, undefined, pluginSkillCounts, options.includeHooks);
 
-  // Usage tables: headers always, rows when transcripts were read (spec §4).
+  // Usage tables: headers always, rows when transcripts were read (spec §2.3, §4; walk D1).
+  let claudeCodeVersion: string | undefined;
+  let rows: { summary: Record<string, CsvValue>[]; firings: Record<string, CsvValue>[]; sessions: Record<string, CsvValue>[] } = { summary: [], firings: [], sessions: [] };
+  if (options.usage) {
+    const scanned = await scanTranscripts(join(home.claudeDir, 'projects'), skills);
+    report.usage = scanned.summary;
+    claudeCodeVersion = scanned.claudeCodeVersion;
+    rows = { summary: summaryRows(scanned.firings, sourceLookup(skills)), firings: scanned.firings, sessions: scanned.sessions };
+  }
+  report.environment = describeEnvironment(home, opts.platform, claudeCodeVersion, pluginSkillCounts, options.includeHooks);
+
   await output.mkdir('skills');
   await output.mkdir('linked');
   await output.mkdir('commands');
   await output.mkdir('agents');
-  for (const [name, columns] of Object.entries(CSV_COLUMNS)) await output.writeText(`usage/${name}.csv`, toCsv(columns, []));
+  for (const [name, columns] of Object.entries(CSV_COLUMNS)) await output.writeText(`usage/${name}.csv`, toCsv(columns, rows[name as keyof typeof rows]));
 
   await output.writeText('collector.txt', renderCollector(report));
   await output.writeText('FLAGGED.md', renderFlagged(report));

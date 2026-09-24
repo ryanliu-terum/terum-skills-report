@@ -196,6 +196,40 @@ describe('leak test on a planted home folder', () => {
     expect(contents.get('MANIFEST.md')).toContain('Referenced, not found:');
   });
 
+  it('derives usage rows: firings own their exchange plus subagent work, sessions carry totals, headless and broken files are counted', () => {
+    const u = result.report.usage;
+    expect(u).toMatchObject({ status: 'read', projectFolders: 1, sessions: 2, headlessSessionsSkipped: 1, subagentTranscripts: 1, linesSkipped: 3, firings: 3, sessionsWithFirings: 1, firstDay: '2026-09-20', lastDay: '2026-09-20' });
+    expect(u.filesSkipped).toHaveLength(1);
+    expect(u.filesSkipped[0]!.where).toMatch(/^~\/\.claude\/projects\/<folder 1>\/[0-9a-f]{16}\.jsonl$/);
+    expect(u.filesSkipped[0]!.reason).toBe('could not parse');
+    expect(result.report.environment.claudeCodeVersion).toBe('2.1.280');
+
+    const rows = (name: string): string[][] => contents.get(`usage/${name}.csv`)!.trim().split('\n').slice(1).map((l) => l.split(','));
+    const firings = rows('firings');
+    expect(firings).toHaveLength(3);
+    const [alpha1, beta, alpha2] = firings as [string[], string[], string[]];
+    // firing_id, session_id, day, skill, source, invoked_by, model, input, cache_read, cache_write, output, turns_after, tool_errors_after, interrupted_after, refired
+    expect(alpha1.slice(2)).toEqual(['2026-09-20', 'alpha', 'home', 'model', 'claude-fable-5-1', '23', '10500', '1050', '148', '4', '1', '0', 'true']);
+    expect(beta.slice(2)).toEqual(['2026-09-20', 'beta', 'home|project-projB', 'human', 'claude-opus-5-5', '4', '5000', '500', '60', '1', '0', '1', 'false']);
+    expect(alpha2.slice(2)).toEqual(['2026-09-20', 'alpha', 'home', 'model', 'claude-fable-5-1', '11', '13000', '1300', '150', '1', '0', '0', 'false']);
+    expect(alpha1[1]).toMatch(/^[0-9a-f]{16}$/);
+    expect(alpha1[0]).toBe(`${alpha1[1]}-1`);
+
+    const sessions = rows('sessions');
+    expect(sessions).toHaveLength(2);
+    const withFirings = sessions.find((s) => s[0] === alpha1[1])!;
+    // session_id, day, turns, human_messages, interruptions, skill_fires, distinct_skills, input, cache_read, cache_write, output, minutes, subagent_sessions
+    expect(withFirings.slice(1)).toEqual(['2026-09-20', '8', '4', '1', '3', '2', '38', '28500', '2850', '358', '4', '1']);
+    const quiet = sessions.find((s) => s[0] !== alpha1[1])!;
+    expect(quiet.slice(1)).toEqual(['2026-09-20', '1', '1', '0', '0', '0', '1', '1', '1', '1', '0', '0']);
+
+    const summary = rows('summary');
+    expect(summary).toEqual([
+      ['alpha', 'home', '2', '2', '0', '1', '2026-09-20', '2026-09-20', '13091', String(Math.ceil(result.report.skills.find((s) => s.name === 'alpha')!.skillTextChars / 4))],
+      ['beta', 'home|project-projB', '1', '0', '1', '1', '2026-09-20', '2026-09-20', '5564', String(Math.ceil(result.report.skills.find((s) => s.name === 'beta')!.skillTextChars / 4))],
+    ]);
+  });
+
   it('reports what it read on the screen, with a count per location', () => {
     const locations = Object.fromEntries(result.report.locations.map((l) => [l.location, l.detail]));
     expect(locations['~/.claude/skills']).toBe('2 skills');
