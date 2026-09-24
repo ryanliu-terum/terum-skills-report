@@ -139,7 +139,7 @@ export async function buildFixture(): Promise<Fixture> {
   ].join('\n'));
 
   // Project A: a skill that references a project workflow and a missing script; a CLAUDE.md; a .env.
-  await write(join(projA, '.claude', 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: Delta.\n---\nRuns `.claude/workflows/wf.js` then `scripts/missing.sh`. See `/etc/passwd` and `C:\\absolute\\nowhere.ps1`.\n');
+  await write(join(projA, '.claude', 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: Delta.\n---\nRuns `.claude/workflows/wf.js` then `scripts/missing.sh`. See `/etc/secrets.yaml` and `C:\\absolute\\nowhere.ps1`.\n');
   await write(join(projA, '.claude', 'workflows', 'wf.js'), `const token = "${PLANTED.namedToken}";\nconst apiKey = process.env.API_KEY;\nconsole.log(token, apiKey);\n`);
   await write(join(projA, '.claude', 'commands', 'pr.md'), '# pr\n\nOpen a PR.\n');
   await write(join(projA, 'CLAUDE.md'), `${PLANTED.claudeMd}\n`);
