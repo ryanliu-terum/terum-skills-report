@@ -3,13 +3,16 @@
  * report and returns; nothing here throws for a bad file, a missing folder or a slow git. The only
  * exception is failing to create the output folder itself, which the bin reports and exits on.
  */
+import { realpath } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { promisify } from 'node:util';
 import { join } from 'node:path';
 import type { CliOptions } from './cli/args.js';
 import { Copier } from './lib/copier.js';
 import { toCsv, type CsvValue } from './lib/csv.js';
 import { discover } from './lib/discover.js';
 import { describeEnvironment, type Platform } from './lib/env.js';
+import { collectGit } from './lib/git.js';
 import { readHome } from './lib/home.js';
 import { collectLinked } from './lib/linked.js';
 import { redact } from './lib/redact.js';
@@ -44,7 +47,9 @@ async function isDirectory(path: string): Promise<boolean> {
 export async function run(opts: RunOptions): Promise<RunResult> {
   const { options } = opts;
   const home = await readHome(opts.home, { hashLabels: options.hashLabels });
-  const scrubber = new Scrubber(opts.home, opts.hostname);
+  // The home folder has two spellings on Windows (8.3 short and long); tools report either.
+  const realHome = await promisify(realpath.native)(opts.home).catch(() => opts.home);
+  const scrubber = new Scrubber([opts.home, realHome], opts.hostname);
 
   const date = opts.now.toISOString().slice(0, 10);
   let desktopFallback = false;
@@ -83,6 +88,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   const copier = new Copier(output, report, redact);
   const { skills, pluginSkillCounts } = await discover(home, copier, report, { includeClaudeMd: options.includeClaudeMd });
   await collectLinked(skills, home, copier, report);
+  await collectGit(skills, report);
 
   // Usage tables: headers always, rows when transcripts were read (spec §2.3, §4; walk D1).
   let claudeCodeVersion: string | undefined;

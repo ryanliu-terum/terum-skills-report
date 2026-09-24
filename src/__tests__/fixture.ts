@@ -5,6 +5,8 @@
  * full path, a subagent prompt, a machine id, an email. The transcript mirrors the record shapes
  * verified against real Claude Code transcripts on 2026-09-24 (docs/spec.md §2.3, §13).
  */
+import { execFileSync } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -202,4 +204,24 @@ export async function buildFixture(): Promise<Fixture> {
   await write(H('.claude', 'projects', slug, 'broken.jsonl'), 'this is not\njson at all\n');
 
   return { tmp, home, projA, projB, pluginRoot };
+}
+
+/**
+ * Makes project A a git repository with two commits on the delta skill by two planted authors on
+ * two dates, so the leak test can check dates and the author count and that no email leaks.
+ * Returns false when git is not installed.
+ */
+export function commitProjectA(fixture: Fixture): boolean {
+  const git = (args: string[], env: Record<string, string> = {}): void => {
+    execFileSync('git', args, { cwd: fixture.projA, stdio: 'ignore', timeout: 20_000, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', ...env } });
+  };
+  try { execFileSync('git', ['--version'], { stdio: 'ignore', timeout: 20_000 }); } catch { return false; }
+  const author = (name: string, email: string, date: string): Record<string, string> => ({ GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_AUTHOR_DATE: date, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email, GIT_COMMITTER_DATE: date });
+  git(['init', '-q', '-b', 'main']);
+  git(['add', '.claude/skills/delta/SKILL.md']);
+  git(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'add delta'], author('Planted One', PLANTED.email, '2026-08-01T10:00:00Z'));
+  appendFileSync(join(fixture.projA, '.claude', 'skills', 'delta', 'SKILL.md'), '\nTouched by a second author.\n', 'utf8');
+  git(['add', '.claude/skills/delta/SKILL.md', '.claude/commands/pr.md']);
+  git(['-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'touch delta'], author('Planted Two', `two.${PLANTED.email}`, '2026-09-01T10:00:00Z'));
+  return true;
 }

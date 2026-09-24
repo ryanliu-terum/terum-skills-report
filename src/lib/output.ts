@@ -23,12 +23,16 @@ export class Scrubber {
   private readonly homePatterns: RegExp[];
   private readonly hostPattern: RegExp | undefined;
 
-  constructor(home: string, hostname: string) {
+  /** `homes`: every known spelling of the home folder (the path as given and its resolved real path). */
+  constructor(homes: readonly string[], hostname: string) {
     const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const forward = home.replaceAll('\\', '/');
-    const back = home.replaceAll('/', '\\');
-    const spellings = new Set<string>([forward, back, back.replaceAll('\\', '\\\\'), `file:///${forward.replace(/^\//, '')}`]);
-    if (forward.startsWith('/')) spellings.add(`file://${forward}`);
+    const spellings = new Set<string>();
+    for (const home of homes) {
+      const forward = home.replaceAll('\\', '/');
+      const back = home.replaceAll('/', '\\');
+      for (const s of [forward, back, back.replaceAll('\\', '\\\\'), `file:///${forward.replace(/^\//, '')}`]) spellings.add(s);
+      if (forward.startsWith('/')) spellings.add(`file://${forward}`);
+    }
     // Longest first so `C:\\Users\\x` wins over `C:\Users\x` inside JSON.
     const ordered = [...spellings].filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
     // Windows paths are case-insensitive and users type them every which way.
