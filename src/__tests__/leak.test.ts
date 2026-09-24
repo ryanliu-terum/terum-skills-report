@@ -46,7 +46,12 @@ describe('leak test on a planted home folder', () => {
       sha256: 'deadbeef',
     });
     contents = new Map();
-    for (const file of await walk(outDir)) contents.set(relative(outDir, file).replaceAll('\\', '/'), await readFile(file, 'utf8'));
+    for (const file of await walk(outDir)) {
+      const bytes = await readFile(file);
+      // A UTF-16 file is read as its text, so a secret in it would be found by the checks below.
+      const text = bytes[0] === 0xff && bytes[1] === 0xfe ? bytes.subarray(2).toString('utf16le') : bytes.toString('utf8');
+      contents.set(relative(outDir, file).replaceAll('\\', '/'), text);
+    }
   });
 
   afterAll(async () => {
@@ -88,6 +93,12 @@ describe('leak test on a planted home folder', () => {
       ['email', PLANTED.email],
       ['CLAUDE.md content', 'PLANTED_CLAUDE_MD'],
       ['application source a skill mentions', PLANTED.appSource],
+      ['password inside a connection string', PLANTED.urlPassword],
+      ['.env inside a skill folder', 'DOTENV_IN_SKILL'],
+      ['ssh key inside a skill folder', PLANTED.rsaBody],
+      ['log file inside a skill folder', 'PLANTED_LOG_LINE'],
+      ['compiled Python inside a skill folder', PLANTED.pycMarker],
+      ['temp folder name (a folder above home listed as a project)', fixture.tmp.split(/[\\/]/).pop()!],
       ['MCP command', PLANTED.mcpCommand],
       ['raw session id', PLANTED.sessionId],
       ['raw session id (no firings)', PLANTED.sessionId4],
@@ -172,13 +183,29 @@ describe('leak test on a planted home folder', () => {
     expect(script).toContain('AUTH_MODE=$MODE');
     expect(script).toContain('author=someone');
     expect(script).toContain('password: [REDACTED:named-secret]');
-    expect(script.split('\n').length).toBe(11);
+    expect(script).toContain('DATABASE_URL=postgres://app:[REDACTED:url-credentials]@db.internal:5432/app');
+    expect(script.split('\n').length).toBe(12);
     const rules = result.report.redactions.filter((r) => r.outputPath === 'skills/home/alpha/scripts/run.sh').map((r) => `${r.line}:${r.rule}:${r.name}`);
-    expect(rules).toEqual(['2:anthropic-key:ANTHROPIC_API_KEY', '5:jwt:Authorization', '6:aws-access-key:AWS_ACCESS_KEY_ID', '7:slack-token:SLACK_TOKEN', '8:named-secret:password']);
+    expect(rules).toEqual(['2:anthropic-key:ANTHROPIC_API_KEY', '5:jwt:Authorization', '6:aws-access-key:AWS_ACCESS_KEY_ID', '7:slack-token:SLACK_TOKEN', '8:named-secret:password', '11:url-credentials:DATABASE_URL']);
     const flagged = contents.get('FLAGGED.md')!;
-    expect(flagged).toContain('| `skills/home/alpha/scripts/run.sh` | 2 | anthropic-key | ANTHROPIC_API_KEY | sk-ant… (');
+    expect(flagged).toContain('| `skills/home/alpha/scripts/run.sh` | 2 | anthropic-key | ANTHROPIC_API_KEY | sk-ant-… (');
+    expect(flagged).toContain('| `skills/home/alpha/scripts/run.sh` | 8 | named-secret | password | 18 chars |');
     expect(flagged).not.toContain('PLANTED');
+    expect(flagged).not.toMatch(/Pl… |hu… /);
     expect(contents.get('skills/home/alpha/AUTHORS.md')).toBe('Maintained by Planted Person <[REDACTED:email]>.\n');
+    // The UTF-16 PowerShell script was decoded, scanned and written back as UTF-16 with its mark.
+    const ps1 = contents.get('skills/home/alpha/helper.ps1')!;
+    expect(ps1).toBe('$env:ANTHROPIC_API_KEY = "[REDACTED:anthropic-key]"\r\nWrite-Host "ok"\r\n');
+    expect(result.report.unscanned).toEqual([]);
+    // Never-collected names inside the skill folder are skipped and listed, not copied.
+    const alpha = result.report.skills.find((s) => s.name === 'alpha')!;
+    expect(alpha.skipped.map((p) => `${p.where.split('/').pop()}: ${p.reason}`).sort()).toEqual([
+      '.env: .env files are never collected',
+      '__pycache__: folder not copied',
+      'debug.log: log files are never collected',
+      'id_rsa: credential and key files are never collected',
+    ]);
+    for (const name of ['.env', 'id_rsa', 'debug.log', '__pycache__/helper.cpython-312.pyc']) expect(contents.has(`skills/home/alpha/${name}`), name).toBe(false);
   });
 
   it('copies the scripts skills reference, refuses .env and paths that climb out, and records every miss', () => {

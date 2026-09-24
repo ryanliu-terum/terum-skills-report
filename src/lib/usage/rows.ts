@@ -5,7 +5,7 @@
  * model response (one API call). Session ids are hashed with a per-run salt that is never written.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import type { CsvValue } from '../csv.js';
 import { reason, type Problem } from '../home.js';
@@ -25,6 +25,9 @@ export interface SessionInput {
 export interface SessionRow extends Record<string, CsvValue> { session_id: string; day: string; turns: number; human_messages: number; interruptions: number; skill_fires: number; distinct_skills: number; input_tokens: number; cache_read_tokens: number; cache_write_tokens: number; output_tokens: number; minutes: number; subagent_sessions: number }
 export interface FiringRow extends Record<string, CsvValue> { firing_id: string; session_id: string; day: string; skill: string; source: string; invoked_by: 'model' | 'human'; model: string; input_tokens: number; cache_read_tokens: number; cache_write_tokens: number; output_tokens: number; turns_after: number; tool_errors_after: number; interrupted_after: number; refired_in_session: boolean }
 export interface SummaryRow extends Record<string, CsvValue> { skill: string; source: string; fires: number; fires_by_model: number; fires_by_human: number; sessions: number; first_day: string; last_day: string; avg_tokens_per_fire: number; skill_text_tokens: number }
+
+/** A transcript is read whole; beyond this the string would not fit in memory on a laptop. Listed, not read. */
+export const MAX_TRANSCRIPT_BYTES = 256 * 1024 * 1024;
 
 export const day = (ts: string): string => (ts.length >= 10 ? ts.slice(0, 10) : '');
 
@@ -218,8 +221,11 @@ export async function scanTranscripts(root: string, skills: readonly SkillEntry[
     for (const file of files) {
       const sessionId = basename(file, '.jsonl');
       let text: string;
-      try { text = await readFile(join(dir, file), 'utf8'); }
-      catch (error) { problem(file, reason(error)); continue; }
+      try {
+        const size = (await stat(join(dir, file))).size;
+        if (size > MAX_TRANSCRIPT_BYTES) { problem(file, `${Math.round(size / 1024 / 1024)} MiB, over the ${MAX_TRANSCRIPT_BYTES / 1024 / 1024} MiB limit`); continue; }
+        text = await readFile(join(dir, file), 'utf8');
+      } catch (error) { problem(file, reason(error)); continue; }
       const parsed = parseTranscript(text);
       summary.linesSkipped += parsed.badLines;
       if (parsed.records === 0) { problem(file, 'could not parse'); continue; }

@@ -16,10 +16,11 @@
  *   named an API route file would have shipped it.
  */
 import { readFile, stat } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Copier } from './copier.js';
 import { displayPath } from './discover.js';
 import type { Home } from './home.js';
+import { neverCollected } from './never.js';
 import type { CopiedExtra, Report, SkillEntry } from './report.js';
 
 /** `https://…` and `file://…` are links, not files on this machine. */
@@ -52,21 +53,11 @@ export function pathTokens(text: string): string[] {
   return [...seen];
 }
 
-/** Names that never leave, whatever references them (spec §2.6). The reason is what the manifest says. */
-export function neverCollected(path: string, includeClaudeMd: boolean): string | undefined {
-  const name = basename(path);
-  const lower = name.toLowerCase();
-  if (/^\.env(\..*)?$/.test(lower)) return '.env files are never collected';
-  if (lower === 'settings.json' || lower === 'settings.local.json' || lower === '.claude.json' || lower === '.mcp.json') return 'settings and MCP configuration are never collected';
-  if (lower === '.credentials.json' || /^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$/.test(lower) || /\.(pem|key|p12|pfx|keystore|jks)$/.test(lower)) return 'credential and key files are never collected';
-  if (/\.jsonl$/.test(lower)) return 'session transcripts are never collected';
-  if (/\.log$/.test(lower)) return 'log files are never collected';
-  if (!includeClaudeMd && (lower === 'claude.md' || lower === 'claude.local.md')) return 'CLAUDE.md is not collected without --include-claude-md';
-  return undefined;
-}
-
-/** Folders a project keeps skill machinery in. A referenced file elsewhere in the project is application source. */
-const MACHINERY = new Set(['.claude', 'scripts', 'workflows', 'hooks', 'bin', 'tools']);
+/**
+ * Folders a project or a plugin keeps skill machinery in. A referenced file elsewhere is application
+ * source (spec §2.6); a plugin whose cache folder is a whole repository has the same shape.
+ */
+const MACHINERY = new Set(['.claude', '.claude-plugin', 'scripts', 'workflows', 'hooks', 'bin', 'tools', 'skills', 'agents', 'commands']);
 
 function insideMachinery(base: string, disk: string): boolean {
   const segments = relative(base, disk).split(sep);
@@ -158,7 +149,7 @@ export async function collectLinked(skills: readonly SkillEntry[], home: Home, c
       const bannedDisk = neverCollected(resolution.disk, options.includeClaudeMd);
       if (bannedDisk !== undefined) { miss(token, bannedDisk); continue; }
       if (inside(skill.diskPath, resolution.disk)) continue; // already copied with the skill
-      if (resolution.kind === 'project' && !insideMachinery(resolution.base, resolution.disk)) { miss(token, 'found, not copied: application source outside .claude, scripts, workflows, hooks, bin or tools'); continue; }
+      if ((resolution.kind === 'project' || resolution.kind === 'plugin') && !insideMachinery(resolution.base, resolution.disk)) { miss(token, 'found, not copied: application source outside .claude, scripts, workflows, hooks, bin or tools'); continue; }
       const existing = byDisk.get(resolution.disk);
       const who = `${skill.name} (${skill.source})`;
       if (existing !== undefined) { if (!existing.referencedBy!.includes(who)) existing.referencedBy!.push(who); continue; }

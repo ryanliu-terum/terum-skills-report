@@ -45,6 +45,7 @@ export function renderScreen(report: Report): string {
   lines.push('  Open the folder. Delete anything you do not want to send.');
   lines.push('  Zip the folder and send it to your Terum contact.');
   lines.push('  This tool has not sent anything and will not. Nothing was installed or changed on this machine.');
+  lines.push('  If your Desktop syncs to a cloud drive, this folder syncs with it; move it first if you would rather it did not.');
   lines.push('');
   return lines.join('\n');
 }

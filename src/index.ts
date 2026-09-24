@@ -36,8 +36,8 @@ async function main(argv: string[]): Promise<number> {
       sha256,
     });
   } catch (error) {
-    // The one fatal case (spec §4): the output folder itself could not be written.
-    process.stderr.write(`terum-skills-report: could not write the output folder: ${error instanceof Error ? error.message : String(error)}\nNothing was sent anywhere.\n`);
+    // The one fatal case (spec §4): the output folder itself could not be created or renamed.
+    process.stderr.write(`terum-skills-report: could not write the output folder: ${error instanceof Error ? error.message : String(error)}\nNothing was sent anywhere. Nothing was written except, possibly, a folder ending in .partial that you can delete.\n`);
     return 1;
   }
   process.stdout.write(parsed.options.json ? renderJson(result.report) : renderScreen(result.report));

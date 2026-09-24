@@ -2,16 +2,18 @@
  * Skill discovery (spec §2.1): every skill folder Claude Code can load on this machine, copied
  * whole, plus slash commands and agent definitions at home and project level, plus project
  * CLAUDE.md and rule files when asked. A skill folder is a folder that holds a SKILL.md.
+ *
+ * "Copied whole" still means within spec §2.6: the never-collected names are skipped and listed,
+ * dependency and cache folders are skipped and listed, and a symbolic link is followed only when
+ * its target stays inside the folder being copied.
  */
 import { createHash } from 'node:crypto';
-import { readdir, stat } from 'node:fs/promises';
-import { join, relative, resolve, sep } from 'node:path';
+import { readdir, realpath, stat } from 'node:fs/promises';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Copier } from './copier.js';
 import { reason, sanitizeLabel, type Home, type Problem } from './home.js';
+import { neverCollected, SKIPPED_FOLDERS } from './never.js';
 import type { CopiedExtra, LocationCount, Report, SkillEntry } from './report.js';
-
-/** Folders never copied from inside a skill: dependency trees and repositories are not skill text. */
-const SKIPPED_FOLDERS = new Set(['node_modules', '.git']);
 
 export interface Root {
   /** `home`, `project-<label>` or `plugin-<marketplace>-<plugin>@<version>`. */
@@ -33,7 +35,7 @@ export function displayPath(home: Home, diskPath: string): string {
   const path = resolve(diskPath);
   const under = (base: string): string | undefined => {
     const rel = relative(base, path);
-    return rel === '' ? '.' : rel.startsWith('..') || (rel.length > 1 && rel[1] === ':') ? undefined : rel.split(sep).join('/');
+    return rel === '' ? '.' : rel.startsWith('..') || isAbsolute(rel) ? undefined : rel.split(sep).join('/');
   };
   const byLabel = (): string | undefined => {
     for (const project of home.projects) {
@@ -77,38 +79,49 @@ async function listFolder(dir: string): Promise<FolderState> {
   }
 }
 
-/** Every regular file under `dir`, relative and forward-slashed, with what was skipped and why. */
-export async function walkFiles(dir: string, display: string): Promise<{ files: string[]; skipped: Problem[] }> {
+const within = (base: string, path: string): boolean => { const rel = relative(base, path); return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel)); };
+
+/**
+ * Every regular file under `dir` that may leave, relative and forward-slashed, with what was
+ * skipped and why. `dir` itself may be a symlink; its target is the boundary links must stay in.
+ */
+export async function walkFiles(dir: string, display: string, includeClaudeMd: boolean): Promise<{ files: string[]; skipped: Problem[] }> {
   const files: string[] = [];
   const skipped: Problem[] = [];
+  const boundary = await realpath(dir).catch(() => resolve(dir));
   const visit = async (sub: string): Promise<void> => {
     let entries;
     try { entries = await readdir(join(dir, sub), { withFileTypes: true }); }
     catch (error) { skipped.push({ where: `${display}/${sub}`, reason: reason(error) }); return; }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const rel = sub === '' ? entry.name : `${sub}/${entry.name}`;
+      const where = `${display}/${rel}`;
       if (entry.isDirectory()) {
-        if (SKIPPED_FOLDERS.has(entry.name)) { skipped.push({ where: `${display}/${rel}`, reason: 'folder not copied' }); continue; }
+        if (SKIPPED_FOLDERS.has(entry.name)) { skipped.push({ where, reason: 'folder not copied' }); continue; }
         await visit(rel);
-      } else if (entry.isFile()) files.push(rel);
-      else if (entry.isSymbolicLink()) {
-        try {
-          const target = await stat(join(dir, rel));
-          if (target.isFile()) files.push(rel);
-          else skipped.push({ where: `${display}/${rel}`, reason: 'symbolic link to a folder, not followed' });
-        } catch { skipped.push({ where: `${display}/${rel}`, reason: 'dangling symbolic link' }); }
+        continue;
       }
+      const banned = neverCollected(entry.name, includeClaudeMd);
+      if (banned !== undefined) { skipped.push({ where, reason: banned }); continue; }
+      if (entry.isFile()) { files.push(rel); continue; }
+      if (!entry.isSymbolicLink()) { skipped.push({ where, reason: 'not a regular file' }); continue; }
+      try {
+        const target = await realpath(join(dir, rel));
+        if (!within(boundary, target)) { skipped.push({ where, reason: 'symbolic link points outside the folder, not followed' }); continue; }
+        if ((await stat(target)).isFile()) files.push(rel);
+        else skipped.push({ where, reason: 'symbolic link to a folder, not followed' });
+      } catch { skipped.push({ where, reason: 'dangling symbolic link' }); }
     }
   };
   await visit('');
   return { files, skipped };
 }
 
-async function copySkill(root: Root, name: string, copier: Copier, report: Report, home: Home): Promise<SkillEntry | undefined> {
+async function copySkill(root: Root, name: string, copier: Copier, report: Report, home: Home, includeClaudeMd: boolean): Promise<SkillEntry | undefined> {
   const diskPath = join(root.dir, 'skills', name);
   const readFrom = displayPath(home, diskPath);
   const outputDir = `skills/${root.source}/${sanitizeLabel(name) || 'skill'}`;
-  const { files, skipped } = await walkFiles(diskPath, readFrom);
+  const { files, skipped } = await walkFiles(diskPath, readFrom, includeClaudeMd);
   const copied: string[] = [];
   const hashes: string[] = [];
   let skillTextChars = 0;
@@ -134,17 +147,19 @@ async function copySkill(root: Root, name: string, copier: Copier, report: Repor
   };
 }
 
-async function copyExtras(root: Root, kind: 'command' | 'agent', copier: Copier, report: Report, home: Home): Promise<number> {
+async function copyExtras(root: Root, kind: 'command' | 'agent', copier: Copier, report: Report, home: Home, includeClaudeMd: boolean): Promise<number> {
   const folder = kind === 'command' ? 'commands' : 'agents';
   const dir = join(root.dir, folder);
   const listed = await listFolder(dir);
   if (listed.state === 'absent') return 0;
   if (listed.state === 'unreadable') { report.problems.push({ where: displayPath(home, dir), reason: listed.reason }); return 0; }
   const display = displayPath(home, dir);
-  const { files, skipped } = await walkFiles(dir, display);
+  const { files, skipped } = await walkFiles(dir, display, includeClaudeMd);
   report.problems.push(...skipped);
   let count = 0;
-  for (const rel of files.filter((f) => f.endsWith('.md'))) {
+  for (const rel of files) {
+    // Claude Code loads Markdown here; anything else is listed, not copied (spec §5.6).
+    if (!rel.endsWith('.md')) { report.problems.push({ where: `${display}/${rel}`, reason: `not a Markdown ${kind}; not copied` }); continue; }
     const outcome = await copier.copy(join(dir, rel), `${folder}/${root.source}/${rel}`);
     if (!outcome.ok) { report.problems.push({ where: `${display}/${rel}`, reason: outcome.reason }); continue; }
     const extra: CopiedExtra = { kind, source: root.source, readFrom: `${display}/${rel}`, outputPath: outcome.outputPath };
@@ -164,7 +179,7 @@ async function copyClaudeMd(home: Home, copier: Copier, report: Report): Promise
     const rulesDir = join(target.base, '.claude', 'rules');
     const rules = await listFolder(rulesDir);
     if (rules.state !== 'absent') {
-      const { files: ruleFiles, skipped } = await walkFiles(rulesDir, displayPath(home, rulesDir));
+      const { files: ruleFiles, skipped } = await walkFiles(rulesDir, displayPath(home, rulesDir), true);
       report.problems.push(...skipped);
       files.push(...ruleFiles.filter((f) => f.endsWith('.md')).map((f) => join('.claude', 'rules', f)));
     }
@@ -201,8 +216,10 @@ export async function discover(home: Home, copier: Copier, report: Report, optio
     if (listed.state === 'unreadable') report.problems.push({ where: displayPath(home, skillsDir), reason: listed.reason });
     if (listed.state === 'scanned') {
       for (const name of listed.names) {
-        try { if (!(await stat(join(skillsDir, name, 'SKILL.md'))).isFile()) continue; } catch { continue; }
-        const entry = await copySkill(root, name, copier, report, home);
+        let marker;
+        try { marker = await stat(join(skillsDir, name, 'SKILL.md')); } catch { continue; } // a folder without SKILL.md is not a skill
+        if (!marker.isFile()) { report.problems.push({ where: displayPath(home, join(skillsDir, name)), reason: 'SKILL.md is not a regular file; not copied' }); continue; }
+        const entry = await copySkill(root, name, copier, report, home, options.includeClaudeMd);
         if (entry !== undefined) found.push(entry);
       }
     }
@@ -213,7 +230,7 @@ export async function discover(home: Home, copier: Copier, report: Report, optio
     } else if (root.source.startsWith('project-')) {
       if (listed.state !== 'absent') {
         const identical = found.filter((s) => homeHashes.has(s.contentHash)).length;
-        locations.push({ location: `${root.display}/skills`, detail: `${found.length} skill${found.length === 1 ? '' : 's'}${identical > 0 ? `   (${identical} identical to ${home.claudeDir === undefined ? '' : '~/.claude/skills'} copies)` : ''}` });
+        locations.push({ location: `${root.display}/skills`, detail: `${found.length} skill${found.length === 1 ? '' : 's'}${identical > 0 ? `   (${identical} identical to ~/.claude/skills copies)` : ''}` });
       }
     } else {
       pluginSkillCounts.set(root.dir, found.length);
@@ -225,8 +242,8 @@ export async function discover(home: Home, copier: Copier, report: Report, optio
       }
     }
     if (root.source.startsWith('plugin-')) continue; // commands and agents are home and project level only (spec §2.1)
-    commands += await copyExtras(root, 'command', copier, report, home);
-    agents += await copyExtras(root, 'agent', copier, report, home);
+    commands += await copyExtras(root, 'command', copier, report, home, options.includeClaudeMd);
+    agents += await copyExtras(root, 'agent', copier, report, home, options.includeClaudeMd);
   }
   if (home.plugins.length > 0) locations.push({ location: '~/.claude/plugins', detail: `${pluginSkills} skill${pluginSkills === 1 ? '' : 's'} from ${pluginsWithSkills} plugin${pluginsWithSkills === 1 ? '' : 's'}` });
   locations.push({ location: '~/.claude/commands, .claude/agents', detail: `${commands} command${commands === 1 ? '' : 's'}, ${agents} agent${agents === 1 ? '' : 's'}` });

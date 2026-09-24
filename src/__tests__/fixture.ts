@@ -36,6 +36,11 @@ export const PLANTED = {
   email: 'planted@example.com',
   claudeMd: 'PLANTED_CLAUDE_MD internal instructions',
   appSource: 'PLANTED_APP_SOURCE',
+  urlPassword: 'PlantedUrlPass22',
+  dotenvInSkill: 'DOTENV_IN_SKILL=abc',
+  rsaBody: 'PLANTED_RSA_BODY_LINE',
+  logLine: 'PLANTED_LOG_LINE with a prompt in it',
+  pycMarker: 'PLANTED_PYC_SOURCE_PATH',
   mcpCommand: 'PLANTED_MCP_COMMAND_PATH',
   sessionId: '1f910c4b-0929-482f-8eb2-b215ca4a17a2',
   sessionId4: '2a2a2a2a-0000-4000-8000-000000000004',
@@ -80,8 +85,10 @@ export async function buildFixture(): Promise<Fixture> {
       [projA]: { allowedTools: [], mcpServers: { 'planted-project-mcp': { command: PLANTED.mcpCommand } }, lastVersionBase: '2.1.280' },
       [projB]: { allowedTools: [] },
       [gone]: { allowedTools: [] },
-      // The home folder opened as a project: must not become a second copy of the home skills or a label.
+      // The home folder opened as a project, and a folder above it: neither may become a copy of the
+      // home skills, a label, or a display path that carries the username.
       [home]: { allowedTools: [] },
+      [tmp]: { allowedTools: [] },
     },
   }, null, 2));
 
@@ -111,8 +118,15 @@ export async function buildFixture(): Promise<Fixture> {
     `password: ${PLANTED.namedPassword}`,
     'AUTH_MODE=$MODE',
     'author=someone',
+    `DATABASE_URL=postgres://app:${PLANTED.urlPassword}@db.internal:5432/app`,
     '',
   ].join('\n'));
+  // Inside the skill folder, files that never leave (spec §2.6) and a UTF-16 script that must still be scanned.
+  await write(H('.claude', 'skills', 'alpha', '.env'), `${PLANTED.dotenvInSkill}\n`);
+  await write(H('.claude', 'skills', 'alpha', 'id_rsa'), `-----BEGIN OPENSSH PRIVATE KEY-----\n${PLANTED.rsaBody}\n-----END OPENSSH PRIVATE KEY-----\n`);
+  await write(H('.claude', 'skills', 'alpha', 'debug.log'), `${PLANTED.logLine}\n`);
+  await writeFile(H('.claude', 'skills', 'alpha', 'helper.ps1'), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(`$env:ANTHROPIC_API_KEY = "${PLANTED.anthropicKey}"\r\nWrite-Host "ok"\r\n`, 'utf16le')]));
+  await write(H('.claude', 'skills', 'alpha', '__pycache__', 'helper.cpython-312.pyc'), `\u0000\u0000binary${PLANTED.pycMarker}${home}\u0000`);
   await write(H('.claude', 'skills', 'beta', 'SKILL.md'), '---\nname: beta\ndescription: Beta.\n---\n# beta\n\nSay beta.\n');
   await write(H('.claude', 'skills', 'alpha', 'AUTHORS.md'), `Maintained by Planted Person <${PLANTED.email}>.\n`);
   await write(H('.claude', 'skills', 'not-a-skill', 'README.md'), 'no SKILL.md here\n');

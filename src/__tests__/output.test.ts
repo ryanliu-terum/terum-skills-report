@@ -17,6 +17,17 @@ describe('Scrubber', () => {
     expect(s.scrub('C:\\Users\\RYANLI~1\\AppData')).toBe('~\\AppData');
     expect(s.scrub('on ryans-macbook-pro and RYANS-MACBOOK-PRO.local')).toBe('on [REDACTED:hostname] and [REDACTED:hostname].local');
   });
+  it('scrubs the bare account name at word boundaries, and a percent-encoded home path', () => {
+    const s = new Scrubber(['/Users/ryanliu'], 'mac');
+    expect(s.scrub('USER=ryanliu; open file:///Users/ryanliu/x%20y and /users/RyanLiu/z')).toBe('USER=[REDACTED:username]; open ~/x%20y and ~/z');
+    expect(s.scrub('ryanliu2 and ryanlius stay')).toBe('ryanliu2 and ryanlius stay');
+    expect(new Scrubber(['C:\\Users\\Ryan Liu'], 'x').scrub('file:///C:/Users/Ryan%20Liu/a')).toBe('~/a');
+  });
+  it('scrubs another machine\'s home folder too, and leaves other paths alone', () => {
+    const s = new Scrubber(['C:\\Users\\Ryan Liu'], 'x');
+    expect(s.scrub('cd /Users/teammate/Documents/Terum && ls /home/deploy/app; see D:\\Users\\Other One\\x and "C:\\\\Users\\\\bob\\\\y"')).toBe('cd ~/Documents/Terum && ls ~/app; see ~\\x and "~\\\\y"');
+    expect(s.scrub('/usr/share/users/list and github.com/ryanliu-terum/x and https://x.test/home/page')).toBe('/usr/share/users/list and github.com/ryanliu-terum/x and https://x.test/home/page');
+  });
   it('leaves a short hostname alone, because it is an ordinary word', () => {
     expect(new Scrubber(['/home/x'], 'dev').scrub('the dev box')).toBe('the dev box');
     expect(new Scrubber(['/home/x'], 'dev').scrub('/home/x/y')).toBe('~/y');

@@ -34,6 +34,11 @@ export function shortNameSpellings(home: string): string[] {
   return out;
 }
 
+/** A home folder on any machine: a `Users` or `home` segment followed by an account name. */
+const NAME = '[^\\\\/\\s"\'`<>|*?:]+';
+/** A name with spaces (`Ryan Liu`) counts only when a separator follows, so `/home/deploy and more` stops at `deploy`. */
+const ANY_HOME = new RegExp(`(?:\\b[A-Za-z]:|(?<![A-Za-z0-9~.\\\\/]))(?:\\\\\\\\|[\\\\/])(?:Users|home)(?:\\\\\\\\|[\\\\/])(?!\\.\\.?(?:[\\\\/]|$))(?:${NAME}(?: ${NAME})*(?=[\\\\/])|${NAME}(?=["'\`\\s)]|$))`, 'g');
+
 /**
  * Replaces the home path (every spelling) with `~` and the hostname with a marker. This is the
  * last line, not the first: readers build paths relative to `~` or a label before they get here.
@@ -41,6 +46,7 @@ export function shortNameSpellings(home: string): string[] {
 export class Scrubber {
   private readonly homePatterns: RegExp[];
   private readonly hostPattern: RegExp | undefined;
+  private readonly userPattern: RegExp | undefined;
 
   /** `homes`: every known spelling of the home folder (the path as given and its resolved real path). */
   constructor(homes: readonly string[], hostname: string) {
@@ -49,14 +55,18 @@ export class Scrubber {
     for (const home of [...homes, ...homes.flatMap(shortNameSpellings)]) {
       const forward = home.replaceAll('\\', '/');
       const back = home.replaceAll('/', '\\');
-      for (const s of [forward, back, back.replaceAll('\\', '\\\\'), `file:///${forward.replace(/^\//, '')}`]) spellings.add(s);
+      for (const s of [forward, back, back.replaceAll('\\', '\\\\'), `file:///${forward.replace(/^\//, '')}`, encodeURI(forward), `file:///${encodeURI(forward.replace(/^\//, ''))}`]) spellings.add(s);
       if (forward.startsWith('/')) spellings.add(`file://${forward}`);
     }
     // Longest first so `C:\\Users\\x` wins over `C:\Users\x` inside JSON.
     const ordered = [...spellings].filter((s) => s.length > 0).sort((a, b) => b.length - a.length);
-    // A Windows path is case-insensitive wherever this runs, and users type them every which way.
-    const windowsShaped = (s: string): boolean => /^(?:file:\/\/\/)?[A-Za-z]:/.test(s);
-    this.homePatterns = ordered.map((s) => new RegExp(escape(s), windowsShaped(s) ? 'gi' : 'g'));
+    // Case-insensitive everywhere: Windows and macOS file systems are, and a wrong-case match
+    // only scrubs more.
+    this.homePatterns = ordered.map((s) => new RegExp(escape(s), 'gi'));
+    // The account name on its own (`USER=ryanliu`, `/users/ryanliu` in another case), with the
+    // same length and word-boundary rule as the hostname. Short names are ordinary words.
+    const user = homes[0]?.split(/[\\/]/).filter(Boolean).pop() ?? '';
+    this.userPattern = user.length >= 5 ? new RegExp(`(?<![A-Za-z0-9-])${escape(user)}(?![A-Za-z0-9-])`, 'gi') : undefined;
     // Short hostnames are ordinary words; replacing them would corrupt prose. Five characters and a
     // word boundary keeps `dev` and `mac` alone while catching `ryans-macbook-pro`.
     this.hostPattern = hostname.length >= 5 ? new RegExp(`(?<![A-Za-z0-9-])${escape(hostname)}(?![A-Za-z0-9-])`, 'gi') : undefined;
@@ -65,7 +75,11 @@ export class Scrubber {
   scrub(text: string): string {
     let out = text;
     for (const pattern of this.homePatterns) out = out.replace(pattern, '~');
+    // Any other machine's home folder too (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>`): skill
+    // text written on a teammate's laptop carries theirs, and §5.5 says no full home path at all.
+    out = out.replace(ANY_HOME, '~');
     if (this.hostPattern !== undefined) out = out.replace(this.hostPattern, '[REDACTED:hostname]');
+    if (this.userPattern !== undefined) out = out.replace(this.userPattern, '[REDACTED:username]');
     return out;
   }
 }
@@ -81,8 +95,15 @@ export class Output {
     this.staging = `${this.final}.partial`;
   }
 
-  /** Creates the staging folder. An old `.partial` from a crashed run is replaced. */
+  /**
+   * Creates the staging folder. Refuses before any work when the final folder already exists,
+   * because the rename at the end would fail after everything was written. An old `.partial`
+   * from a crashed run of ours is replaced.
+   */
   async open(): Promise<void> {
+    let exists = false;
+    try { await stat(this.final); exists = true; } catch { /* free */ }
+    if (exists) throw new Error(`the output folder already exists: ${this.final}`);
     await rm(this.staging, { recursive: true, force: true });
     await mkdir(this.staging, { recursive: true });
   }

@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { assignLabels } from '../lib/home.js';
@@ -50,12 +50,19 @@ describe('discovery flags', () => {
     const { report } = await run(opts);
     // The secret in the Stop hook's command line is redacted like any copied file and listed in FLAGGED.md.
     expect(report.environment.hookCommands).toEqual([`SessionStart: ${PLANTED.hookCommand} --start`, `Stop: ${PLANTED.hookCommand} --secret-header "x-control-secret: [REDACTED:named-secret]"`]);
-    expect(report.redactions).toContainEqual({ outputPath: 'MANIFEST.md', line: 2, rule: 'named-secret', name: 'x-control-secret', hint: 'PL… (21 chars)' });
+    expect(report.redactions).toContainEqual({ outputPath: 'MANIFEST.md', line: 2, rule: 'named-secret', name: 'x-control-secret', hint: '21 chars' });
     const manifest = await readFile(join(out, 'MANIFEST.md'), 'utf8');
     expect(manifest).toContain('hook commands (included by `--include-hooks`)');
     expect(manifest).not.toContain(fixture.home);
     expect(manifest).not.toContain(PLANTED.hookSecret);
     expect(await readFile(join(out, 'FLAGGED.md'), 'utf8')).toContain('| `MANIFEST.md` | 2 | named-secret | x-control-secret |');
+  });
+
+  it('refuses an output folder that already exists before writing anything', async () => {
+    const out = join(fixture.home, 'Desktop', 'taken');
+    await run(base(out));
+    await expect(run(base(out))).rejects.toThrow(/already exists/);
+    await expect(stat(`${out}.partial`)).rejects.toThrow();
   });
 
   it('--hash-labels names project sources by hash, and --no-usage says so', async () => {

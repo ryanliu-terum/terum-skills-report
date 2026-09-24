@@ -72,10 +72,13 @@ export async function collectGit(skills: readonly SkillEntry[], report: Report, 
   const rootByDir = new Map<string, string | undefined>();
   let gitMissing = false;
 
-  const repoRootOf = async (dir: string): Promise<string | undefined> => {
+  const repoRootOf = async (dir: string, where: string): Promise<string | undefined> => {
     if (rootByDir.has(dir)) return rootByDir.get(dir);
     const result = await git(['rev-parse', '--show-toplevel'], dir);
     if (!result.ok && result.reason === 'git is not installed') gitMissing = true;
+    // Not a repository is the ordinary case and says nothing. Any other failure (a timeout,
+    // `dubious ownership` on a share) is recorded, or the manifest would imply the folder was checked.
+    else if (!result.ok && !/not a git repository/i.test(result.reason)) problems.push({ where, reason: result.reason });
     const root = result.ok ? resolve(result.stdout.trim()) : undefined;
     rootByDir.set(dir, root);
     return root;
@@ -83,13 +86,14 @@ export async function collectGit(skills: readonly SkillEntry[], report: Report, 
 
   for (const skill of skills) {
     if (gitMissing) break;
-    const root = await repoRootOf(skill.diskPath);
-    if (root === undefined) continue; // not inside a repository: nothing to report
+    const root = await repoRootOf(skill.diskPath, skill.outputDir);
+    if (root === undefined) continue; // not inside a repository, or recorded above
     const files = skill.files.map((outputPath) => ({ outputPath, disk: resolve(skill.diskPath, ...outputPath.slice(skill.outputDir.length + 1).split('/')) }));
     await mapWithConcurrency(files, CONCURRENCY, async ({ outputPath, disk }) => {
       // The file is named relative to its own folder, which is the spawn's cwd: git resolves it
       // itself, so the repository root's spelling (long or 8.3 on Windows) never has to match ours.
-      const result = await git(['log', '--follow', '--format=%aI%x1f%aE', '--', basename(disk)], dirname(disk));
+      // `:(literal)` keeps a name with `*`, `?` or `[` from being read as a pattern.
+      const result = await git(['log', '--follow', '--format=%aI%x1f%aE', '--', `:(literal)${basename(disk)}`], dirname(disk));
       if (!result.ok) { problems.push({ where: outputPath, reason: result.reason }); return; }
       const parsed = parseLog(result.stdout);
       if (parsed === undefined) { problems.push({ where: outputPath, reason: 'not committed' }); return; }
