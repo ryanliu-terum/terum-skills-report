@@ -62,15 +62,21 @@ export async function run(opts: RunOptions): Promise<RunResult> {
   }
   const output = new Output(final, scrubber);
   await output.open();
+  // The folder as the filesystem spells it, not as typed: a typed path may use a spelling of the
+  // home folder the scrubber cannot know (an 8.3 short name), and it would land in collector.txt.
+  const realStaging = await promisify(realpath.native)(output.staging).catch(() => output.staging);
+  const realFinal = realStaging.endsWith('.partial') ? realStaging.slice(0, -'.partial'.length) : output.final;
+  const shownFolder = scrubber.scrub(realFinal.replaceAll('\\', '/'));
+  const command = ['terum-skills-report', ...(options.out !== undefined ? ['--out', shownFolder] : []), ...(options.usage ? [] : ['--no-usage']), ...(options.includeHooks ? ['--include-hooks'] : []), ...(options.includeClaudeMd ? ['--include-claude-md'] : []), ...(options.hashLabels ? ['--hash-labels'] : []), ...(options.json ? ['--json'] : [])].join(' ');
 
   const report: Report = {
     version: opts.version,
     commit: opts.commit,
     sha256: opts.sha256,
-    command: ['terum-skills-report', ...opts.argv].join(' '),
+    command,
     startedAt: opts.now.toISOString(),
     flags: { usage: options.usage, includeHooks: options.includeHooks, includeClaudeMd: options.includeClaudeMd, hashLabels: options.hashLabels },
-    outputFolder: scrubber.scrub(output.final.replaceAll('\\', '/')),
+    outputFolder: shownFolder,
     desktopFallback,
     skills: [],
     extras: [],
@@ -87,7 +93,7 @@ export async function run(opts: RunOptions): Promise<RunResult> {
 
   const copier = new Copier(output, report, redact);
   const { skills, pluginSkillCounts } = await discover(home, copier, report, { includeClaudeMd: options.includeClaudeMd });
-  await collectLinked(skills, home, copier, report);
+  await collectLinked(skills, home, copier, report, { includeClaudeMd: options.includeClaudeMd });
   await collectGit(skills, report);
 
   // Usage tables: headers always, rows when transcripts were read (spec §2.3, §4; walk D1).

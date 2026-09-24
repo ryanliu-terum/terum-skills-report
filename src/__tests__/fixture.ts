@@ -34,6 +34,7 @@ export const PLANTED = {
   userId: 'PLANTED_USER_ID_0000',
   email: 'planted@example.com',
   claudeMd: 'PLANTED_CLAUDE_MD internal instructions',
+  appSource: 'PLANTED_APP_SOURCE',
   mcpCommand: 'PLANTED_MCP_COMMAND_PATH',
   sessionId: '1f910c4b-0929-482f-8eb2-b215ca4a17a2',
   sessionId4: '2a2a2a2a-0000-4000-8000-000000000004',
@@ -78,6 +79,8 @@ export async function buildFixture(): Promise<Fixture> {
       [projA]: { allowedTools: [], mcpServers: { 'planted-project-mcp': { command: PLANTED.mcpCommand } }, lastVersionBase: '2.1.280' },
       [projB]: { allowedTools: [] },
       [gone]: { allowedTools: [] },
+      // The home folder opened as a project: must not become a second copy of the home skills or a label.
+      [home]: { allowedTools: [] },
     },
   }, null, 2));
 
@@ -94,6 +97,7 @@ export async function buildFixture(): Promise<Fixture> {
     '---', 'name: alpha', 'description: Runs the alpha workflow.', '---',
     '# alpha', '', 'Run `scripts/run.sh` first, then `node .claude/workflows/helper.js`.',
     'Never read `../.env`. Docs: https://example.com/alpha/guide.md', '',
+    'Permissions live in `.claude/settings.json`; transcripts in `~/.claude/projects/x.jsonl`.', '',
   ].join('\n'));
   await write(H('.claude', 'skills', 'alpha', 'scripts', 'run.sh'), [
     '#!/bin/sh',
@@ -109,6 +113,7 @@ export async function buildFixture(): Promise<Fixture> {
     '',
   ].join('\n'));
   await write(H('.claude', 'skills', 'beta', 'SKILL.md'), '---\nname: beta\ndescription: Beta.\n---\n# beta\n\nSay beta.\n');
+  await write(H('.claude', 'skills', 'alpha', 'AUTHORS.md'), `Maintained by Planted Person <${PLANTED.email}>.\n`);
   await write(H('.claude', 'skills', 'not-a-skill', 'README.md'), 'no SKILL.md here\n');
   await write(H('.claude', 'workflows', 'helper.js'), `// helper\nconst GITHUB_TOKEN = "${PLANTED.githubToken}";\nconst token = process.env.TOKEN; // a variable read\nexport default 1;\n`);
   await write(H('.claude', 'commands', 'deploy.md'), '# deploy\n\nDeploy the thing.\n');
@@ -141,7 +146,9 @@ export async function buildFixture(): Promise<Fixture> {
   ].join('\n'));
 
   // Project A: a skill that references a project workflow and a missing script; a CLAUDE.md; a .env.
-  await write(join(projA, '.claude', 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: Delta.\n---\nRuns `.claude/workflows/wf.js` then `scripts/missing.sh`. See `/etc/secrets.yaml` and `C:\\absolute\\nowhere.ps1`.\n');
+  await write(join(projA, '.claude', 'skills', 'delta', 'SKILL.md'), '---\nname: delta\ndescription: Delta.\n---\nRuns `.claude/workflows/wf.js` then `scripts/missing.sh` and `scripts/deploy.sh`. Fix `lib/phase1.ts`. See `/etc/secrets.yaml` and `C:\\absolute\\nowhere.ps1`.\n');
+  await write(join(projA, 'scripts', 'deploy.sh'), '#!/bin/sh\necho deploy\n');
+  await write(join(projA, 'lib', 'phase1.ts'), 'export const PLANTED_APP_SOURCE = 1;\n');
   await write(join(projA, '.claude', 'workflows', 'wf.js'), `const token = "${PLANTED.namedToken}";\nconst apiKey = process.env.API_KEY;\nconsole.log(token, apiKey);\n`);
   await write(join(projA, '.claude', 'commands', 'pr.md'), '# pr\n\nOpen a PR.\n');
   await write(join(projA, 'CLAUDE.md'), `${PLANTED.claudeMd}\n`);
@@ -190,11 +197,12 @@ export async function buildFixture(): Promise<Fixture> {
     { ...sub, type: 'user', uuid: 's0', parentUuid: null, timestamp: t(17), message: { role: 'user', content: PLANTED.subagentPrompt } },
     { ...sub, type: 'assistant', uuid: 's1', parentUuid: 's0', timestamp: t(18), message: { id: 'msg_s1', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'text', text: 'sub result' }], usage: usage(7, 50, 500, 8) } },
   ]));
-  // A session with no skill firing still gets a row (spec §3.1).
+  // A second, short session: one exchange, one plugin-prefixed firing.
   const sid4 = PLANTED.sessionId4;
   await write(H('.claude', 'projects', slug, `${sid4}.jsonl`), jsonl([
     { ...base, sessionId: sid4, type: 'user', uuid: 'q1', parentUuid: null, promptSource: 'typed', timestamp: t(1000), message: { role: 'user', content: 'hello' } },
-    { ...base, sessionId: sid4, type: 'assistant', uuid: 'q2', parentUuid: 'q1', timestamp: t(1002), message: { id: 'msg_q', model: 'claude-fable-5-1', role: 'assistant', content: [{ type: 'text', text: 'hi' }], usage: usage(1, 1, 1, 1) } },
+    // A plugin skill fires under its plugin prefix; the copied folder is named without it.
+    { ...base, sessionId: sid4, type: 'assistant', uuid: 'q2', parentUuid: 'q1', timestamp: t(1002), message: { id: 'msg_q', model: 'claude-fable-5-1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_q', name: 'Skill', input: { skill: 'gamma:gamma-skill' } }], usage: usage(1, 1, 1, 1) } },
   ]));
   // A headless session: every record sdk-cli. Skipped, counted.
   await write(H('.claude', 'projects', slug, '3b3b3b3b-0000-4000-8000-000000000003.jsonl'), jsonl([

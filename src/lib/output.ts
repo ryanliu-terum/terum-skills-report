@@ -16,6 +16,25 @@ export interface WrittenFile {
 }
 
 /**
+ * Windows keeps an 8.3 short name for every long folder name (`Ryan Liu` is also `RYANLI~1`), and
+ * temp paths and some tools use it. There is no API to ask for it from Node, so the likely
+ * spellings are derived: the first six letters and digits, upper-cased, then `~1` to `~4`. Only
+ * segments that need a short name (over eight characters, or with a space or a dot) get one.
+ */
+export function shortNameSpellings(home: string): string[] {
+  if (!/^[A-Za-z]:[\\/]/.test(home)) return [];
+  const segments = home.split(/[\\/]/);
+  const out: string[] = [];
+  segments.forEach((segment, i) => {
+    if (i === 0 || (segment.length <= 8 && !/[ .]/.test(segment))) return;
+    const stem = segment.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
+    if (stem.length === 0) return;
+    for (let n = 1; n <= 4; n++) out.push([...segments.slice(0, i), `${stem}~${n}`, ...segments.slice(i + 1)].join('\\'));
+  });
+  return out;
+}
+
+/**
  * Replaces the home path (every spelling) with `~` and the hostname with a marker. This is the
  * last line, not the first: readers build paths relative to `~` or a label before they get here.
  */
@@ -27,7 +46,7 @@ export class Scrubber {
   constructor(homes: readonly string[], hostname: string) {
     const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const spellings = new Set<string>();
-    for (const home of homes) {
+    for (const home of [...homes, ...homes.flatMap(shortNameSpellings)]) {
       const forward = home.replaceAll('\\', '/');
       const back = home.replaceAll('/', '\\');
       for (const s of [forward, back, back.replaceAll('\\', '\\\\'), `file:///${forward.replace(/^\//, '')}`]) spellings.add(s);

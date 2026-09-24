@@ -28,12 +28,21 @@ const SHAPES: readonly ShapeRule[] = [
   { rule: 'aws-access-key', pattern: /(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])/g },
   { rule: 'slack-token', pattern: /xox[abposr]-[A-Za-z0-9-]{10,}/g },
   { rule: 'jwt', pattern: /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
+  // Not a secret, but identity: spec §5.5 allows no email anywhere in the bundle, and skills carry
+  // `author:` lines. `git@github.com:org/repo` (scp form, a colon after the host) is left alone.
+  { rule: 'email', pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-]|:[A-Za-z0-9])/g },
 ];
 
 const PRIVATE_KEY_BEGIN = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/;
 const PRIVATE_KEY_END = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/;
 
-const KEYWORDS = ['apikey', 'key', 'keys', 'secret', 'secrets', 'token', 'tokens', 'password', 'passwords', 'passwd', 'pwd', 'credential', 'credentials', 'auth', 'authorization', 'bearer'];
+/**
+ * The spec's list plus `apikey`, `pwd`, `authorization`, `bearer`. Plurals are left out on
+ * purpose: `tokens`, `keys` and `secrets` name counts, maps and containers in code far more often
+ * than one secret value (`max_tokens = 4096`, `keys: string[]`); `credentials` stays because it
+ * routinely names a single `user:password` string.
+ */
+const KEYWORDS = ['apikey', 'key', 'secret', 'token', 'password', 'passwd', 'pwd', 'credential', 'credentials', 'auth', 'authorization', 'bearer'];
 
 const isLetter = (c: string | undefined): boolean => c !== undefined && /[A-Za-z]/.test(c);
 const isLower = (c: string | undefined): boolean => c !== undefined && c >= 'a' && c <= 'z';
@@ -62,15 +71,27 @@ export function looksSecretName(name: string): boolean {
   return false;
 }
 
-/** Placeholders and variable reads are not literals. */
+/**
+ * Is this literal shaped like a secret? Variable reads, placeholders, paths, URLs, type names,
+ * constant names and ordinary words are not. What passes: at least eight characters with a digit
+ * (`hunter22`, `abcd1234efgh`), or at least sixteen without one (`correcthorsebatterystaple`).
+ * Measured on this machine's 136 skills on 2026-09-24: the plain rule flagged 338 lines, every
+ * one a code word (`key: string`, `const key = 'compact'`, `max_tokens = 4096`); this rule keeps
+ * the fixture's planted secrets and drops those.
+ */
 export function isLiteralValue(value: string): boolean {
   const v = value.trim();
-  if (v.length < 4) return false;
+  if (v.length < 8) return false;
   if (/^[$%{<([@`]/.test(v)) return false;
   if (/environ|getenv|process\.env|secrets\.|vars\.|\$\{|\$\(/i.test(v)) return false;
-  if (/^(true|false|null|none|nil|undefined|yes|no|on|off)$/i.test(v)) return false;
   if (/^(your|changeme|change-me|xxx|\*\*\*|\.\.\.|example|placeholder|dummy|redacted|\[redacted)/i.test(v)) return false;
   if (/^[*x#._-]+$/i.test(v)) return false;
+  if (/^(\.{0,2}[\\/]|~[\\/]|[A-Za-z]:[\\/])/.test(v) || /:\/\//.test(v)) return false; // a path or a URL
+  const hasDigit = /\d/.test(v);
+  if (!hasDigit && v.length < 16) return false; // a word: `compact`, `string`, `Bearer`
+  if (!hasDigit && /\s/.test(v)) return false; // prose: `"the auth flow for admins"`
+  if (/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/.test(v)) return false; // a CONSTANT_NAME
+  if (/^[A-Za-z_][A-Za-z0-9_.]*\(/.test(v)) return false; // a call: `getToken(`
   return true;
 }
 

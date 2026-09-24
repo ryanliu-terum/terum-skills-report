@@ -107,9 +107,13 @@ export async function readHome(root: string, options: { hashLabels: boolean }): 
     const projects = asObject(config['projects']) ?? {};
     const roots: string[] = [];
     const mcpByRoot = new Map<string, string[]>();
+    const homeRoot = resolve(root);
     for (const [path, entry] of Object.entries(projects)) {
       const projectRoot = resolve(path);
       if (roots.includes(projectRoot)) continue;
+      // The home folder itself, opened as a project: its `.claude` is the home one, already read,
+      // and its base name is the username, which must not become a label (spec §5.5).
+      if (projectRoot.toLowerCase() === homeRoot.toLowerCase()) continue;
       if (!(await isDirectory(projectRoot))) continue; // a folder Claude Code once opened that no longer exists
       roots.push(projectRoot);
       mcpByRoot.set(projectRoot, Object.keys(asObject(asObject(entry)?.['mcpServers']) ?? {}).sort());

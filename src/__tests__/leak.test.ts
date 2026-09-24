@@ -86,6 +86,7 @@ describe('leak test on a planted home folder', () => {
       ['user id', PLANTED.userId],
       ['email', PLANTED.email],
       ['CLAUDE.md content', 'PLANTED_CLAUDE_MD'],
+      ['application source a skill mentions', PLANTED.appSource],
       ['MCP command', PLANTED.mcpCommand],
       ['raw session id', PLANTED.sessionId],
       ['raw session id (no firings)', PLANTED.sessionId4],
@@ -176,6 +177,7 @@ describe('leak test on a planted home folder', () => {
     const flagged = contents.get('FLAGGED.md')!;
     expect(flagged).toContain('| `skills/home/alpha/scripts/run.sh` | 2 | anthropic-key | ANTHROPIC_API_KEY | sk-ant… (');
     expect(flagged).not.toContain('PLANTED');
+    expect(contents.get('skills/home/alpha/AUTHORS.md')).toBe('Maintained by Planted Person <[REDACTED:email]>.\n');
   });
 
   it('copies the scripts skills reference, refuses .env and paths that climb out, and records every miss', () => {
@@ -184,12 +186,16 @@ describe('leak test on a planted home folder', () => {
       'linked/home/workflows/helper.js <- alpha (home)',
       'linked/plugin-market-gamma@abc123def456/scripts/g.py <- gamma-skill (plugin-market-gamma@abc123def456)',
       'linked/projA/.claude/workflows/wf.js <- delta (project-projA)',
+      'linked/projA/scripts/deploy.sh <- delta (project-projA)',
     ]);
     const misses = result.report.linkedMisses.map((m) => `${m.skill}: ${m.reference} -> ${m.reason}`).sort();
     expect(misses).toEqual([
       'alpha: ../.env -> .env files are never collected',
+      'alpha: .claude/settings.json -> settings and MCP configuration are never collected',
+      'alpha: ~/.claude/projects/x.jsonl -> session transcripts are never collected',
       'delta: /etc/secrets.yaml -> absolute path outside the project and ~/.claude; not opened',
       'delta: C:\\absolute\\nowhere.ps1 -> absolute path outside the project and ~/.claude; not opened',
+      'delta: lib/phase1.ts -> found, not copied: application source outside .claude, scripts, workflows, hooks, bin or tools',
       'delta: scripts/missing.sh -> not found in the skill folder, its project or ~/.claude',
       'gamma-skill: ${CLAUDE_PLUGIN_ROOT}/scripts/absent.py -> not found under the plugin folder',
     ]);
@@ -206,7 +212,7 @@ describe('leak test on a planted home folder', () => {
 
   it('derives usage rows: firings own their exchange plus subagent work, sessions carry totals, headless and broken files are counted', () => {
     const u = result.report.usage;
-    expect(u).toMatchObject({ status: 'read', projectFolders: 1, sessions: 2, headlessSessionsSkipped: 1, subagentTranscripts: 1, linesSkipped: 3, firings: 3, sessionsWithFirings: 1, firstDay: '2026-09-20', lastDay: '2026-09-20' });
+    expect(u).toMatchObject({ status: 'read', projectFolders: 1, sessions: 2, headlessSessionsSkipped: 1, subagentTranscripts: 1, linesSkipped: 3, firings: 4, sessionsWithFirings: 2, firstDay: '2026-09-20', lastDay: '2026-09-20' });
     expect(u.filesSkipped).toHaveLength(1);
     expect(u.filesSkipped[0]!.where).toMatch(/^~\/\.claude\/projects\/<folder 1>\/[0-9a-f]{16}\.jsonl$/);
     expect(u.filesSkipped[0]!.reason).toBe('could not parse');
@@ -214,27 +220,34 @@ describe('leak test on a planted home folder', () => {
 
     const rows = (name: string): string[][] => contents.get(`usage/${name}.csv`)!.trim().split('\n').slice(1).map((l) => l.split(','));
     const firings = rows('firings');
-    expect(firings).toHaveLength(3);
-    const [alpha1, beta, alpha2] = firings as [string[], string[], string[]];
+    expect(firings).toHaveLength(4);
+    // Both sessions fall on one day, so their order follows the per-run hash; look rows up by skill.
+    const gamma = firings.find((f) => f[3] === 'gamma:gamma-skill')!;
+    const main = firings.filter((f) => f[1] !== gamma[1]);
+    const [alpha1, beta, alpha2] = main as [string[], string[], string[]];
     // firing_id, session_id, day, skill, source, invoked_by, model, input, cache_read, cache_write, output, turns_after, tool_errors_after, interrupted_after, refired
     expect(alpha1.slice(2)).toEqual(['2026-09-20', 'alpha', 'home', 'model', 'claude-fable-5-1', '23', '10500', '1050', '148', '4', '1', '0', 'true']);
     expect(beta.slice(2)).toEqual(['2026-09-20', 'beta', 'home|project-projB', 'human', 'claude-opus-5-5', '4', '5000', '500', '60', '1', '0', '1', 'false']);
     expect(alpha2.slice(2)).toEqual(['2026-09-20', 'alpha', 'home', 'model', 'claude-fable-5-1', '11', '13000', '1300', '150', '1', '0', '0', 'false']);
+    expect(gamma.slice(2)).toEqual(['2026-09-20', 'gamma:gamma-skill', 'plugin-market-gamma@abc123def456', 'model', 'claude-fable-5-1', '1', '1', '1', '1', '0', '0', '0', 'false']);
     expect(alpha1[1]).toMatch(/^[0-9a-f]{16}$/);
     expect(alpha1[0]).toBe(`${alpha1[1]}-1`);
+    expect(alpha2[0]).toBe(`${alpha1[1]}-3`);
 
     const sessions = rows('sessions');
     expect(sessions).toHaveLength(2);
     const withFirings = sessions.find((s) => s[0] === alpha1[1])!;
     // session_id, day, turns, human_messages, interruptions, skill_fires, distinct_skills, input, cache_read, cache_write, output, minutes, subagent_sessions
     expect(withFirings.slice(1)).toEqual(['2026-09-20', '8', '4', '1', '3', '2', '38', '28500', '2850', '358', '4', '1']);
-    const quiet = sessions.find((s) => s[0] !== alpha1[1])!;
-    expect(quiet.slice(1)).toEqual(['2026-09-20', '1', '1', '0', '0', '0', '1', '1', '1', '1', '0', '0']);
+    const quiet = sessions.find((s) => s[0] === gamma[1])!;
+    expect(quiet.slice(1)).toEqual(['2026-09-20', '1', '1', '0', '1', '1', '1', '1', '1', '1', '0', '0']);
 
+    const chars = (name: string): string => String(Math.ceil(result.report.skills.find((s) => s.name === name)!.skillTextChars / 4));
     const summary = rows('summary');
     expect(summary).toEqual([
-      ['alpha', 'home', '2', '2', '0', '1', '2026-09-20', '2026-09-20', '13091', String(Math.ceil(result.report.skills.find((s) => s.name === 'alpha')!.skillTextChars / 4))],
-      ['beta', 'home|project-projB', '1', '0', '1', '1', '2026-09-20', '2026-09-20', '5564', String(Math.ceil(result.report.skills.find((s) => s.name === 'beta')!.skillTextChars / 4))],
+      ['alpha', 'home', '2', '2', '0', '1', '2026-09-20', '2026-09-20', '13091', chars('alpha')],
+      ['beta', 'home|project-projB', '1', '0', '1', '1', '2026-09-20', '2026-09-20', '5564', chars('beta')],
+      ['gamma:gamma-skill', 'plugin-market-gamma@abc123def456', '1', '1', '0', '1', '2026-09-20', '2026-09-20', '4', chars('gamma-skill')],
     ]);
   });
 
@@ -252,6 +265,9 @@ describe('leak test on a planted home folder', () => {
     expect(locations['projB/.claude/skills']).toBe('1 skill   (1 identical to ~/.claude/skills copies)');
     expect(locations['~/.claude/plugins']).toBe('1 skill from 1 plugin');
     expect(locations['~/.claude/commands, .claude/agents']).toBe('2 commands, 2 agents');
+    // The home folder listed as a project in ~/.claude.json is not a second source or a label.
+    expect(result.report.locations.filter((l) => l.location === '~/.claude/skills')).toHaveLength(1);
+    expect(result.report.skills.map((s) => s.source)).not.toContain(`project-${PLANTED.username}`);
     expect(result.report.environment.plugins.find((p) => p.id === 'gamma@market')!.skills).toBe(1);
     expect(result.report.problems).toContainEqual({ where: '~/.claude/plugins/cache/market/missing/1.0.0', reason: 'plugin folder listed in installed_plugins.json is not on disk' });
   });

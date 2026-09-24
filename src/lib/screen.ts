@@ -5,11 +5,13 @@
 import { USAGE_SENTENCE } from './manifest.js';
 import { redactedFiles, uniqueByContent, type Report } from './report.js';
 
-const pad = (label: string, width = 40): string => label.padEnd(width);
 const num = (n: number, width = 6): string => String(n).padStart(width);
 
 export function renderScreen(report: Report): string {
   const lines: string[] = [];
+  // Locations are padded to the longest one so counts line up whatever the folder names are.
+  const width = Math.max(40, ...report.locations.map((l) => l.location.length + 3));
+  const pad = (label: string, w = width): string => label.padEnd(w);
   lines.push(`terum-skills-report ${report.version}  (sha256 ${report.sha256.slice(0, 4)}…${report.sha256.slice(-4)}, source: github.com/ryanliu-terum/terum-skills-report @ ${report.commit.slice(0, 7)})`);
   lines.push('Runs offline. Nothing is sent anywhere. You review the folder, then zip and send it yourself.');
   lines.push('');
@@ -20,7 +22,7 @@ export function renderScreen(report: Report): string {
   else if (u.status === 'no-session-data') lines.push(`  ${pad('~/.claude/projects')}no session data on this machine`);
   else {
     lines.push(`  ${pad('~/.claude/projects')}${u.sessions} sessions, ${u.firstDay ?? '?'} to ${u.lastDay ?? '?'}`);
-    if (u.filesSkipped.length > 0) lines.push(`  ${pad('')}  ${u.filesSkipped.length} file${u.filesSkipped.length === 1 ? '' : 's'} skipped: could not read or parse`);
+    if (u.filesSkipped.length > 0) lines.push(`  ${pad('')}  ${u.filesSkipped.length} file${u.filesSkipped.length === 1 ? '' : 's'} skipped   (reasons in MANIFEST.md)`);
     if (u.headlessSessionsSkipped > 0) lines.push(`  ${pad('')}  ${u.headlessSessionsSkipped} headless transcript${u.headlessSessionsSkipped === 1 ? '' : 's'} (evals, SDK) not counted`);
     lines.push(`  ${USAGE_SENTENCE.slice(0, USAGE_SENTENCE.indexOf('. ') + 1)}`);
     lines.push(`  ${USAGE_SENTENCE.slice(USAGE_SENTENCE.indexOf('. ') + 2)}`);
