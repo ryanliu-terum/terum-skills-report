@@ -6,7 +6,8 @@ name: Release
 #
 # One-time setup: an npm Trusted Publisher for ryanliu-terum/terum-skills-report on this workflow
 # (docs.npmjs.com/trusted-publishers), and a GitHub environment named `npm` with a required reviewer.
-# Trusted publishing needs npm >= 11.5.1 on Node >= 22.14. Nothing here bumps versions.
+# Trusted publishing needs npm >= 11.5.1 on Node >= 22.14; Node 22 bundles npm 10.9, so the npm CLI
+# is upgraded below before the publish. Nothing here bumps versions.
 
 on:
   workflow_dispatch:
@@ -34,6 +35,10 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: npm
+      # Node 22 ships npm 10.9, which cannot exchange the runner's OIDC token for a publish token, so
+      # `npm publish` would fail with "need auth". Pinned to the npm CLI that terum-skills' own
+      # releases use; bump deliberately.
+      - run: npm install -g npm@11.11.1 && npm --version
       - name: Check the version matches
         env:
           EXPECTED: ${{ inputs.expected_version }}
