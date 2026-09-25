@@ -53,6 +53,24 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm publish --provenance --access public
+      # Decision 9 (docs/decision-walk.md): the tag is created only once the registry serves this
+      # version with this commit recorded against it (spec §5.1). If this times out, the version is
+      # published and untagged; check npm by hand, then push the tag by hand.
+      - name: Verify the registry serves this version from this commit
+        env:
+          EXPECTED: ${{ inputs.expected_version }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 12); do
+            head=$(npm view --prefer-online "terum-skills-report@$EXPECTED" gitHead 2>/dev/null || true)
+            integrity=$(npm view --prefer-online "terum-skills-report@$EXPECTED" dist.integrity 2>/dev/null || true)
+            if [ "$head" = "$GITHUB_SHA" ] && [ -n "$integrity" ]; then
+              echo "registry serves $EXPECTED from $head ($integrity)"; exit 0
+            fi
+            echo "attempt $attempt: gitHead is '${head:-absent}'; waiting 10s"; sleep 10
+          done
+          echo "::error::registry does not serve terum-skills-report@$EXPECTED from $GITHUB_SHA after two minutes; the publish succeeded but no tag was created"
+          exit 1
       - name: Tag
         env:
           EXPECTED: ${{ inputs.expected_version }}
