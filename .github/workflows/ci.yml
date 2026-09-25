@@ -71,3 +71,12 @@ jobs:
           tmp=$(mktemp -d); cp "release/$f" "$tmp/"
           (cd "$tmp" && npm init -y >/dev/null && npm install --no-audit --no-fund "./$f" >/dev/null)
           "$tmp/node_modules/.bin/terum-skills-report" --version
+      # `npm publish` rewrites package.json on the way out and, with npm 11, warns that a `./`-prefixed
+      # bin was "invalid and removed" (it re-adds the normalised path; `npm pack` and the install
+      # above never warn). Whatever `npm pkg fix` would change must already be committed, so the
+      # repo matches the published manifest.
+      - name: package.json needs no auto-corrections at publish time
+        run: |
+          set -euo pipefail
+          npm pkg fix
+          git diff --exit-code -- package.json

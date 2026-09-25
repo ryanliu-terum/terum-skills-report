@@ -150,3 +150,21 @@ re-read against the code and fixed with a planted case in the leak test unless n
 - Without a `Desktop` folder the output goes to the home folder and the screen says so.
 - The exit code is non-zero only when the output folder itself cannot be written, or the flags
   are wrong.
+
+## Release path (spec §5.1), 2026-09-25
+
+- **The GitHub Actions Node 22 image bundles npm 10.9.9,** and npm trusted publishing needs 11.5.1
+  or newer, so the first dispatch would have failed at `npm publish` with "need auth". The release
+  workflow installs npm 11.11.1 first, the pin terum-skills' own releases use (PR #9).
+- **npm refuses trusted publishing for a package's first version** (the Trusted Publisher setting
+  lives on the package's settings page). Decision 8: a placeholder 0.0.1 published by hand holds
+  the name, 1.0.0 comes from the workflow, and the placeholder is unpublished within 72 hours
+  (Decision 10). A laptop publish cannot produce provenance, so it was never an option for 1.0.0.
+- **The tag is created only once the registry serves the version from the released commit.**
+  Decision 9: after `npm publish` the job reads `gitHead` and `dist.integrity` back from npm,
+  waiting up to two minutes (PR #10).
+- **npm 11 reports a `./`-prefixed `bin` entry as "invalid and removed" at publish time,** while
+  `npm pack` and CI's install-from-tarball smoke stay silent. terum-skills' published manifest
+  shows npm re-adds the normalised path, so the command survives; but the warning would have
+  appeared on every release and the repo would not match the published manifest. `bin` is
+  `dist/index.js` now, and CI fails if `npm pkg fix` would change `package.json` (PR #11).
